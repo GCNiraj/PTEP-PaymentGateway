@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DK Payment Gateway Admin Dashboard (Realtime)</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      font-family: "Georgia", "Times New Roman", serif;
+      margin: 24px;
+      line-height: 1.4;
+    }
+    h1, h2 { margin: 16px 0 8px; }
+    section { border: 1px solid #ccc; padding: 12px; margin: 12px 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; }
+    pre { background: #f6f6f6; padding: 12px; border: 1px solid #ddd; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>DK Payment Gateway - Request Guide</h1>
+  <p>Use the endpoints below to send requests directly to the DK Payment Gateway backend.</p>
+
+  <section>
+    <h2>1) Fetch Access Token</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/auth/token</code></p>
+    <pre>{
+  "username": "PG_AVS",
+  "password": "p@PG1234",
+  "client_id": "PG_AVS_123",
+  "client_secret": "PG-Requestor-TestSecret123",
+  "grant_type": "password",
+  "scopes": "keys:read",
+  "source_app": "SRC_AVS_0201",
+  "request_id": "REQ-001"
+}</pre>
+  </section>
+
+  <section>
+    <h2>Recent Transactions (Table)</h2>
+    <table border="1" cellpadding="6" cellspacing="0">
+      <thead>
+        <tr>
+          <th>STAN / ID</th>
+          <th>BFS Txn ID</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Accounts</th>
+          <th>Created At</th>
+        </tr>
+      </thead>
+      <tbody id="tx-table">
+        <tr><td colspan="6">Loading...</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>2) Fetch RSA Private Key</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/sign/key</code></p>
+    <pre>{
+  "request_id": "REQ-002",
+  "source_app": "SRC_AVS_0201"
+}</pre>
+  </section>
+
+  <section>
+    <h2>3) Pull Payment Authorization</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/account-auth/pull-payment</code></p>
+    <pre>{
+  "transaction_datetime": "2025-08-22T11:30:00Z",
+  "stan_number": "020111571912",
+  "transaction_amount": 100.00,
+  "transaction_fee": 5.00,
+  "payment_desc": "Payment for Invoice #123",
+  "account_number": "110158212197",
+  "account_name": "John Doe",
+  "email_id": "customer@example.com",
+  "phone_number": "17811440",
+  "remitter_account_number": "770182571",
+  "remitter_account_name": "Jane Smith",
+  "remitter_bank_id": "1040"
+}</pre>
+  </section>
+
+  <section>
+    <h2>4) Debit Request (OTP)</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/debit-request/pull-payment</code></p>
+    <pre>{
+  "request_id": "REQ-003",
+  "bfs_bfsTxnId": "52340008135111",
+  "bfs_remitter_Otp": "123456",
+  "bfs_orderNo": "ORDER-123"
+}</pre>
+  </section>
+
+  <section>
+    <h2>5) Intra Beneficiary Inquiry</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/beneficiary/account-inquiry</code></p>
+    <pre>{
+  "request_id": "REQ-004",
+  "amount": "5.00",
+  "currency": "BTN",
+  "bene_bank_code": "1060",
+  "bene_account_number": "100100148337",
+  "source_account_name": "Rinzin",
+  "source_account_number": "100100365856"
+}</pre>
+  </section>
+
+  <section>
+    <h2>6) Intra Transfer</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/initiate/transaction</code></p>
+    <pre>{
+  "request_id": "REQ-005",
+  "inquiry_id": "DKBT--ptr2aseR2Ch85QY-AufVg-776768",
+  "transaction_datetime": "2025-08-27T12:00:00Z",
+  "source_app": "SRC_AVS_0201",
+  "transaction_amount": 10.00,
+  "currency": "BTN",
+  "payment_type": "INTRA",
+  "source_account_name": "Rinzin Jamtsho",
+  "source_account_number": "100100148337",
+  "bene_cust_name": "Dorji Wangchuk",
+  "bene_account_number": "100100148337",
+  "bene_bank_code": "1010",
+  "narration": "Test transfer"
+}</pre>
+  </section>
+
+  <section>
+    <h2>7) Status (Same Day)</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/transaction/status</code></p>
+    <pre>{
+  "request_id": "REQ-006",
+  "transaction_id": "test_txn_update23567",
+  "bene_account_number": "100100365856"
+}</pre>
+  </section>
+
+  <section>
+    <h2>8) Status (Later Days)</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/transactions/status</code></p>
+    <pre>{
+  "request_id": "REQ-007",
+  "transaction_id": "test_txn_update23567",
+  "trasnaction_date": "2025-09-28",
+  "bene_account_number": "100100365856"
+}</pre>
+  </section>
+
+  <section>
+    <h2>9) Status (Intra)</h2>
+    <p><strong>POST</strong> <code>/api/dkpg/intra-transaction/status</code></p>
+    <pre>{
+  "request_id": "REQ-008",
+  "reference_no": "523400081332",
+  "transaction_date": "2025-09-18",
+  "bene_account_number": "100100365856"
+}</pre>
+  </section>
+
+  <script>
+    async function loadTransactions() {
+      const table = document.getElementById("tx-table");
+      try {
+        const res = await fetch("/api/transactions");
+        const data = await res.json();
+        if (!data || !data.data) {
+          table.innerHTML = "<tr><td colspan='6'>No data</td></tr>";
+          return;
+        }
+        const rows = data.data;
+        if (rows.length === 0) {
+          table.innerHTML = "<tr><td colspan='6'>No rows yet</td></tr>";
+          return;
+        }
+        table.innerHTML = "";
+        for (const row of rows) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${row.stan_number || row.id}</td>
+            <td>${row.bfs_txn_id || ""}</td>
+            <td>${row.amount || ""} ${row.currency || ""}</td>
+            <td>${row.status || ""}</td>
+            <td>${row.remitter_account || ""} → ${row.beneficiary_account || ""}</td>
+            <td>${row.created_at || ""}</td>
+          `;
+          table.appendChild(tr);
+        }
+      } catch (e) {
+        table.innerHTML = "<tr><td colspan='6'>Failed to load</td></tr>";
+      }
+    }
+    loadTransactions();
+  </script>
+</body>
+</html>

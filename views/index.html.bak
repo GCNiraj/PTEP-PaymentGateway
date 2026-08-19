@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DK Payment Gateway UI (Wireframe)</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      font-family: "Georgia", "Times New Roman", serif;
+      margin: 24px;
+      line-height: 1.4;
+    }
+    h1, h2, h3 {
+      margin: 16px 0 8px;
+    }
+    section {
+      border: 1px solid #ccc;
+      padding: 12px;
+      margin: 12px 0;
+    }
+    form label {
+      display: block;
+      margin: 8px 0 4px;
+    }
+    input {
+      width: 100%;
+      max-width: 520px;
+      padding: 6px;
+    }
+    button {
+      margin-top: 8px;
+      padding: 6px 10px;
+    }
+    pre {
+      background: #f6f6f6;
+      padding: 12px;
+      border: 1px solid #ddd;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>DK Payment Gateway UI (Guide-Based Wireframes)</h1>
+  <p>These layouts mirror the screens in <strong>guide/DK_PG_INTEGRATION_ARCHITECTURE_GUIDE.md</strong>.</p>
+
+  <h2>System Architecture (Context)</h2>
+  <pre>
+┌─────────────────────┐         ┌─────────────────────┐         ┌─────────────────────┐
+│  YOUR APPLICATION   │◄───────►│   YOUR BACKEND      │◄───────►│  DK PAYMENT         │
+│  (Data Source)      │         │   (Integration)     │         │  GATEWAY API        │
+└─────────────────────┘         └─────────────────────┘         └─────────────────────┘
+  </pre>
+
+  <h2>Scenario 1: Pull Payment (Other Bank → DK Bank)</h2>
+  <section>
+    <h3>Screen 1: Payment Initiation Form</h3>
+    <pre>
+Complete Your Payment
+Order/Invoice Number: [Order12345]
+Amount to Pay: BTN 1,500.00
+Description: Purchase of Product X
+
+Your Bank Details (Remitter)
+- Select Your Bank: [Dropdown]
+- Your Account Number: [__________]
+- Your Account Name:   [__________]
+- Your Phone Number:   [__________]
+
+Beneficiary (Receiving)
+- Receiving Account: 110158212197
+- Account Name: YourCompany Pvt Ltd
+- Bank: Digital Kidu Bank
+
+[Cancel] [Proceed to Pay]
+    </pre>
+  </section>
+
+  <section>
+    <h3>Screen 2: OTP Verification</h3>
+    <pre>
+Verify Your Payment
+An OTP has been sent to your mobile number ending in **1440
+
+OTP: [ ][ ][ ][ ][ ][ ]
+Amount: BTN 1,500.00
+To: YourCompany Pvt Ltd
+OTP expires in: 4:59
+
+[Resend OTP] [Confirm Payment]
+    </pre>
+  </section>
+
+  <section>
+    <h3>Screen 3: Payment Result</h3>
+    <pre>
+Success:
+Payment Successful!
+Transaction ID: TXN523400081332
+Amount: BTN 1,500.00
+Date: 22 Aug 2025, 11:30 AM
+
+Failure:
+Payment Failed
+Reason: Invalid OTP entered
+Reference: TXN523400081332
+    </pre>
+  </section>
+
+  <h2>Scenario 2: Intra-Bank Transfer (DK → DK)</h2>
+  <section>
+    <h3>Screen 1: Transfer Form</h3>
+    <pre>
+Bank Transfer
+From Account: 100100365856 (YourCompany Pvt Ltd)
+To Account Number: [__________]
+[Verify Account]
+Account Name: [Appears after verify]
+
+Amount: [__________]
+Purpose: [__________]
+
+[Cancel] [Transfer]
+    </pre>
+  </section>
+
+  <section>
+    <h3>Screen 2: Confirmation</h3>
+    <pre>
+Confirm Transfer
+Amount: BTN 1,000.00
+From: YourCompany Pvt Ltd (100100365856)
+To: Dorji Wangchuk (100100148337)
+Purpose: Refund for Order #123
+
+[Go Back] [Confirm]
+    </pre>
+  </section>
+
+  <section>
+    <h3>Screen 3: Success</h3>
+    <pre>
+Transfer Successful!
+Transaction ID: TXN6f67d4ca-c8f9
+Amount: BTN 1,000.00
+Date: 27 Aug 2025, 12:00 PM
+
+[Download Receipt] [Make Another]
+    </pre>
+  </section>
+
+  <h2>Scenario 3: Payment Status Check</h2>
+  <section>
+    <h3>Status Check Screen</h3>
+    <pre>
+Check Payment Status
+Transaction Reference: [__________]
+Transaction Date: [DD/MM/YYYY]
+[Check Status]
+
+Status: Successfully Completed
+Amount: BTN 1,500.00
+Date: 18 Sep 2025, 12:32 PM
+From Account: *3679
+To Account: *5856
+    </pre>
+  </section>
+
+  <h2>Auth & Keys</h2>
+  <section>
+    <h3>Fetch Access Token</h3>
+    <form>
+      <label>Username
+        <input type="text" name="username" placeholder="PG_AVS" />
+      </label>
+      <br />
+      <label>Password
+        <input type="password" name="password" placeholder="" />
+      </label>
+      <br />
+      <label>Client ID
+        <input type="text" name="client_id" placeholder="PG_AVS_123" />
+      </label>
+      <br />
+      <label>Client Secret
+        <input type="text" name="client_secret" placeholder="" />
+      </label>
+      <br />
+      <label>Scopes
+        <input type="text" name="scopes" value="keys:read" />
+      </label>
+      <br />
+      <label>Source App
+        <input type="text" name="source_app" value="SRC_AVS_0201" />
+      </label>
+      <br />
+      <button type="submit">Fetch Token</button>
+    </form>
+  </section>
+
+  <section>
+    <h3>Fetch RSA Private Key</h3>
+    <form>
+      <label>Request ID
+        <input type="text" name="request_id" placeholder="unique-id" />
+      </label>
+      <br />
+      <button type="submit">Fetch Key</button>
+    </form>
+  </section>
+
+  <h2>Payment Gateway (Pull Payment)</h2>
+  <section>
+    <h3>Authorization (Account Inquiry + OTP)</h3>
+    <form>
+      <label>Transaction Datetime
+        <input type="text" name="transaction_datetime" placeholder="2025-08-22T11:30:00Z" />
+      </label>
+      <br />
+      <label>STAN Number
+        <input type="text" name="stan_number" placeholder="020111571912" />
+      </label>
+      <br />
+      <label>Transaction Amount
+        <input type="text" name="transaction_amount" placeholder="100.00" />
+      </label>
+      <br />
+      <label>Transaction Fee
+        <input type="text" name="transaction_fee" placeholder="5.00" />
+      </label>
+      <br />
+      <label>Payment Description
+        <input type="text" name="payment_desc" placeholder="Payment for Invoice #123" />
+      </label>
+      <br />
+      <label>Beneficiary Account Number
+        <input type="text" name="account_number" placeholder="110158212197" />
+      </label>
+      <br />
+      <label>Beneficiary Account Name
+        <input type="text" name="account_name" placeholder="John Doe" />
+      </label>
+      <br />
+      <label>Email ID
+        <input type="text" name="email_id" placeholder="customermail@gmail.com" />
+      </label>
+      <br />
+      <label>Phone Number
+        <input type="text" name="phone_number" placeholder="17811440" />
+      </label>
+      <br />
+      <label>Remitter Account Number
+        <input type="text" name="remitter_account_number" placeholder="770182571" />
+      </label>
+      <br />
+      <label>Remitter Account Name
+        <input type="text" name="remitter_account_name" placeholder="Jane Smith" />
+      </label>
+      <br />
+      <label>Remitter Bank ID
+        <input type="text" name="remitter_bank_id" placeholder="1040" />
+      </label>
+      <br />
+      <button type="submit">Authorize</button>
+    </form>
+  </section>
+
+  <section>
+    <h3>Debit Request (OTP Confirmation)</h3>
+    <form>
+      <label>Request ID
+        <input type="text" name="request_id" placeholder="REQ_6437649i" />
+      </label>
+      <br />
+      <label>BFS Txn ID
+        <input type="text" name="bfs_TxnId" placeholder="523400081332" />
+      </label>
+      <br />
+      <label>Remitter OTP
+        <input type="text" name="bfs_remitter_otp" placeholder="658792" />
+      </label>
+      <br />
+      <label>Order No
+        <input type="text" name="bfs_orderNo" placeholder="627672-98349839" />
+      </label>
+      <br />
+      <button type="submit">Debit</button>
+    </form>
+  </section>
+
+  <h2>Intra (DK-DK) Transfers</h2>
+  <section>
+    <h3>Beneficiary Account Inquiry</h3>
+    <form>
+      <label>Request ID
+        <input type="text" name="request_id" placeholder="unique-id" />
+      </label>
+      <br />
+      <label>Amount
+        <input type="text" name="amount" placeholder="300.00" />
+      </label>
+      <br />
+      <label>Currency
+        <input type="text" name="currency" placeholder="BTN" />
+      </label>
+      <br />
+      <label>Bene Bank Code
+        <input type="text" name="bene_bank_code" placeholder="1060" />
+      </label>
+      <br />
+      <label>Bene Account Number
+        <input type="text" name="bene_account_number" placeholder="100100148337" />
+      </label>
+      <br />
+      <label>Source Account Name
+        <input type="text" name="source_account_name" placeholder="Rinzin Jamtsho" />
+      </label>
+      <br />
+      <label>Source Account Number
+        <input type="text" name="source_account_number" placeholder="100100365856" />
+      </label>
+      <br />
+      <button type="submit">Inquiry</button>
+    </form>
+  </section>
+
+  <section>
+    <h3>Initiate Transaction</h3>
+    <form>
+      <label>Request ID
+        <input type="text" name="request_id" placeholder="unique-id" />
+      </label>
+      <br />
+      <label>Inquiry ID
+        <input type="text" name="inquiry_id" placeholder="DKBT--ptr2aseR2Ch85QY-AufVg-776768" />
+      </label>
+      <br />
+      <label>Transaction Datetime
+        <input type="text" name="transaction_datetime" placeholder="2025-08-27T12:00:00Z" />
+      </label>
+      <br />
+      <label>Source App
+        <input type="text" name="source_app" placeholder="SRC_AVS_0201" />
+      </label>
+      <br />
+      <label>Transaction Amount
+        <input type="text" name="transaction_amount" placeholder="300.00" />
+      </label>
+      <br />
+      <label>Currency
+        <input type="text" name="currency" placeholder="BTN" />
+      </label>
+      <br />
+      <label>Payment Type
+        <input type="text" name="payment_type" placeholder="INTRA" />
+      </label>
+      <br />
+      <label>Source Account Name
+        <input type="text" name="source_account_name" placeholder="Rinzin Jamtsho" />
+      </label>
+      <br />
+      <label>Source Account Number
+        <input type="text" name="source_account_number" placeholder="100100365856" />
+      </label>
+      <br />
+      <label>Beneficiary Name
+        <input type="text" name="bene_cust_name" placeholder="Sonam" />
+      </label>
+      <br />
+      <label>Beneficiary Account Number
+        <input type="text" name="bene_account_number" placeholder="100100148337" />
+      </label>
+      <br />
+      <label>Beneficiary Bank Code
+        <input type="text" name="bene_bank_code" placeholder="1060" />
+      </label>
+      <br />
+      <label>Narration
+        <input type="text" name="narration" placeholder="Test transfer" />
+      </label>
+      <br />
+      <button type="submit">Initiate Transfer</button>
+    </form>
+  </section>
+
+  <h2>Status Checks</h2>
+  <section>
+    <h3>Transaction Status (Same Day)</h3>
+    <form>
+      <label>Request ID
+        <input type="text" name="request_id" placeholder="unique-id" />
+      </label>
+      <br />
+      <label>Transaction ID
+        <input type="text" name="transaction_id" placeholder="523400081332" />
+      </label>
+      <br />
+      <label>Beneficiary Account Number
+        <input type="text" name="bene_account_number" placeholder="100100365856" />
+      </label>
+      <br />
+      <button type="submit">Check Status</button>
+    </form>
+  </section>
+
+  <section>
+    <h3>Transaction Status (Later Days)</h3>
+    <form>
+      <label>Request ID
+        <input type="text" name="request_id" placeholder="unique-id" />
+      </label>
+      <br />
+      <label>Transaction ID
+        <input type="text" name="transaction_id" placeholder="523400081332" />
+      </label>
+      <br />
+      <label>Transaction Date
+        <input type="text" name="transaction_date" placeholder="2025-09-18" />
+      </label>
+      <br />
+      <label>Beneficiary Account Number
+        <input type="text" name="bene_account_number" placeholder="100100365856" />
+      </label>
+      <br />
+      <button type="submit">Check Status</button>
+    </form>
+  </section>
+
+  <section>
+    <h3>Intra Transaction Status</h3>
+    <form>
+      <label>Request ID
+        <input type="text" name="request_id" placeholder="unique-id" />
+      </label>
+      <br />
+      <label>Reference No
+        <input type="text" name="reference_no" placeholder="523400081332" />
+      </label>
+      <br />
+      <label>Transaction Date
+        <input type="text" name="transaction_date" placeholder="2025-09-18" />
+      </label>
+      <br />
+      <label>Beneficiary Account Number
+        <input type="text" name="bene_account_number" placeholder="100100365856" />
+      </label>
+      <br />
+      <button type="submit">Check Intra Status</button>
+    </form>
+  </section>
+
+  <h2>Results</h2>
+  <section>
+    <p>Response output area (raw JSON):</p>
+    <pre>{ }</pre>
+  </section>
+</body>
+</html>

@@ -1,0 +1,38 @@
+{
+  "info": {
+    "name": "International Payment - Status Check (External / Stripe Provider)",
+    "_postman_id": "dk-intl-payment-status-external-v1",
+    "description": "Direct call to the Stripe provider to check international payment status.\n\nAuth: X-Gravitee-Api-Key header\nEndpoint: GET /check-application-status?application_no={your_reference_id}",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Check Application Status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Gravitee-Api-Key",
+            "value": "{{stripe_api_key}}",
+            "description": "Stripe provider API key",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{stripe_base_url}}/check-application-status?application_no=",
+          "host": ["{{stripe_base_url}}"],
+          "path": ["check-application-status"],
+          "query": [
+            {
+              "key": "application_no",
+              "value": "",
+              "description": "Enter your reference_id here"
+            }
+          ]
+        },
+        "description": "Checks payment completion status directly from the Stripe provider.\n\nFill in `application_no` query param with your reference_id before sending.\n\nResponse: `response_data: true` means payment completed, `false` means still pending.\n\nKnown response codes:\n- `0000` — success\n- `4000` / `4001` / `4002` — validation error"
+      },
+      "response": []
+    }
+  ]
+}

@@ -1,0 +1,282 @@
+/* =============================================
+   DK Payment Gateway — Global Styles
+   Stack: Bootstrap 5 + Bootstrap Icons + Inter
+   ============================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ── Design Tokens ───────────────────────────── */
+:root {
+  --color-primary:        #4F46E5;
+  --color-primary-hover:  #4338CA;
+  --color-success:        #22C55E;
+  --color-danger:         #EF4444;
+  --color-warning:        #F59E0B;
+  --color-bg:             #F8F9FB;
+  --color-surface:        #FFFFFF;
+  --color-sidebar:        #1E1E2D;
+  --color-sidebar-hover:  #2A2A3D;
+  --color-sidebar-text:   #A0A3BD;
+  --color-sidebar-active: #FFFFFF;
+  --color-text:           #1F2937;
+  --color-muted:          #6B7280;
+  --color-border:         #E5E7EB;
+}
+
+/* ── Base ───────────────────────────────────── */
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+}
+
+.dashboard-page {
+  height: 100vh;
+  overflow: hidden;
+}
+
+.dashboard-main-bg {
+  background: var(--color-bg);
+}
+
+.login-page-bg {
+  background: var(--color-bg);
+}
+
+/* ── Sidebar ─────────────────────────────────── */
+#sidebar {
+  width: 240px;
+  min-width: 240px;
+  background: var(--color-sidebar);
+  overflow-y: auto;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+}
+
+.sidebar-brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+  padding: 0 0.75rem;
+  letter-spacing: -0.01em;
+}
+
+.sidebar-brand small {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--color-sidebar-text);
+  display: block;
+  margin-top: 2px;
+}
+
+.sidebar-link {
+  color: var(--color-sidebar-text);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-link:hover,
+.sidebar-link.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-sidebar-active);
+}
+
+.sidebar-link.active {
+  background: rgba(79, 70, 229, 0.25);
+  color: #fff;
+}
+
+.sidebar-divider {
+  border-color: rgba(255, 255, 255, 0.08);
+  margin: 0.5rem 0;
+}
+
+/* ── Main Area ───────────────────────────────── */
+#main-content {
+  flex: 1;
+  overflow-y: auto;
+  height: 100vh;
+}
+
+/* ── Cards ───────────────────────────────────── */
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  background: var(--color-surface);
+}
+
+.metric-card {
+  border-left: 4px solid var(--color-border);
+  transition: box-shadow 0.2s;
+}
+
+.metric-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.metric-card.success  { border-left-color: var(--color-success); }
+.metric-card.danger   { border-left-color: var(--color-danger); }
+.metric-card.warning  { border-left-color: var(--color-warning); }
+.metric-card.primary  { border-left-color: var(--color-primary); }
+.metric-card.amount   { border-left-color: #8B5CF6; }
+
+.metric-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+/* ── Tables ──────────────────────────────────── */
+.table th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.table td {
+  vertical-align: middle;
+  font-size: 0.85rem;
+}
+
+.table tbody tr {
+  transition: background 0.1s;
+}
+
+.table-hover tbody tr:hover {
+  background-color: rgba(79, 70, 229, 0.04);
+  cursor: pointer;
+}
+
+/* ── Badges ──────────────────────────────────── */
+.badge {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.35em 0.65em;
+}
+
+/* ── Login Page ──────────────────────────────── */
+.login-card {
+  border-radius: 1rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.login-card-width {
+  width: 100%;
+  max-width: 420px;
+}
+
+.login-subtitle {
+  font-size: 0.875rem;
+}
+
+.login-logo {
+  width: 48px;
+  height: 48px;
+  background: var(--color-primary);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.25rem;
+}
+
+.login-logo i {
+  font-size: 1.5rem;
+  color: white;
+}
+
+#captcha-widget {
+  min-height: 65px;
+}
+
+/* ── Buttons ─────────────────────────────────── */
+.btn-primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+/* ── Pre / Code blocks ───────────────────────── */
+pre.code-block {
+  background: #1a1a2e;
+  color: #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  max-height: 240px;
+}
+
+/* ── Toast Container ─────────────────────────── */
+.toast-title { font-weight: 600; font-size: 0.875rem; }
+.toast-body  { font-size: 0.85rem; }
+
+/* ── API Guide accordion ─────────────────────── */
+.accordion-button:not(.collapsed) {
+  background-color: rgba(79, 70, 229, 0.06);
+  color: var(--color-primary);
+}
+
+/* ── Misc ────────────────────────────────────── */
+.font-monospace { font-size: 0.82rem; }
+
+.empty-state {
+  color: var(--color-muted);
+  padding: 3rem 1rem;
+  text-align: center;
+}
+
+.empty-state i {
+  font-size: 2.5rem;
+  display: block;
+  margin-bottom: 0.75rem;
+  opacity: 0.5;
+}
+
+.page-header-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.filter-date-input {
+  width: 145px;
+}
+
+.metric-value-amount {
+  color: #8b5cf6;
+}
+
+.chart-area {
+  height: 200px;
+}
+
+.badge-match-meta {
+  font-size: 0.65rem;
+}
+
+.code-block-compact {
+  max-height: 180px;
+}
+
+.toast-top-layer {
+  z-index: 1100;
+}
