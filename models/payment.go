@@ -16,7 +16,6 @@ type PullPaymentInitiateRequest struct {
 type PullPaymentConfirmRequest struct {
 	TransactionID string `json:"transaction_id"`
 	OTP           string `json:"otp"`
-	ExternalAppID string `json:"external_app_id"`
 	BFSTxnID      string `json:"bfs_txn_id"`
 	// Legacy fields for internal use if needed
 	Reference  string `json:"reference"`
@@ -24,34 +23,11 @@ type PullPaymentConfirmRequest struct {
 	BFSOrderNo string `json:"bfs_orderNo"`
 }
 
-type IntraBankRequest struct {
-	ExternalAppID            string  `json:"external_app_id"`
-	Reference                string  `json:"external_reference"`
-	Amount                   float64 `json:"transaction_amount"`
-	RemitterAccountNumber    string  `json:"remitter_account_number"`
-	BeneficiaryAccountNumber string  `json:"beneficiary_account_number"`
-	Purpose                  string  `json:"purpose"`
-	Remarks                  string  `json:"remarks"`
-}
-
 type IntraInquiryRequest struct {
 	MerchantReference     string  `json:"merchant_reference"`
 	Reference             string  `json:"external_reference"`
 	TransactionAmount     float64 `json:"transaction_amount"`
 	RemitterAccountNumber string  `json:"remitter_account_number"`
-}
-
-type IntraTransferRequest struct {
-	ExternalAppID         string  `json:"external_app_id"`
-	ExternalReference     string  `json:"external_reference"`
-	InquiryID             string  `json:"inquiry_id"`
-	TransactionAmount     float64 `json:"transaction_amount"`
-	RemitterAccountNumber string  `json:"remitter_account_number"`
-	RemitterAccountName   string  `json:"remitter_account_name"`
-	CustomerPhone         string  `json:"customer_phone"`
-	EmailID               string  `json:"email_id"`
-	Purpose               string  `json:"purpose"`
-	Remarks               string  `json:"remarks"`
 }
 
 type IntraVerifyRequest struct {

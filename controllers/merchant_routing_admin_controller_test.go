@@ -1,6 +1,10 @@
 package controllers
 
-import "testing"
+import (
+	"testing"
+
+	"example.com/fiber-mvc/internal/storage"
+)
 
 func TestValidCredentialPayload(t *testing.T) {
 	dkpg := map[string]string{
@@ -16,5 +20,12 @@ func TestValidCredentialPayload(t *testing.T) {
 	}
 	if !validCredentialPayload("stripe", map[string]string{"api_key": "key", "agency_name": "agency", "submerchant_id": "sub", "dk_account": "account"}) {
 		t.Fatal("expected complete Stripe credential payload to be valid")
+	}
+}
+
+func TestSafeCredentialDoesNotExposeCiphertext(t *testing.T) {
+	credential := safeCredential(storage.GatewayCredentialConfiguration{EncryptedCredentials: "ciphertext-that-must-not-leak"})
+	if credential.EncryptedCredentials != "" {
+		t.Fatal("safe credential response exposed encrypted credential payload")
 	}
 }

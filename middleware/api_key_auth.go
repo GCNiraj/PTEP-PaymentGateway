@@ -300,16 +300,3 @@ func GetAppName(c *fiber.Ctx) string {
 	}
 	return ""
 }
-
-// ExtractAppIDFromRequest tries to get app_id from context or request body.
-// Why needed: backward compatibility with existing requests that send external_app_id.
-// Called from: business controllers.
-func ExtractAppIDFromRequest(c *fiber.Ctx, bodyAppID string) string {
-	// First, try to get from authenticated context
-	if appID := GetAppID(c); appID != "" {
-		return appID
-	}
-
-	// Fall back to body parameter (for backward compatibility)
-	return strings.TrimSpace(bodyAppID)
-}

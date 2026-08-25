@@ -108,11 +108,11 @@ func (ctl *MerchantRoutingAdminController) CreateCredential(c *fiber.Ctx) error 
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
-	credential, err := ctl.newCredential(c, req)
-	if err != nil {
+	if ctl == nil || ctl.Repo == nil || ctl.Cipher == nil || !validCredentialPayload(req.Provider, req.Credentials) || strings.TrimSpace(req.RecipientID) == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway credential configuration"})
 	}
-	if err := ctl.Repo.CreateCredential(c.Context(), credential, adminActor(c)); err != nil {
+	credential, err := ctl.Repo.CreateDraftCredential(c.Context(), strings.TrimSpace(req.RecipientID), strings.TrimSpace(req.Provider), "env:PAYMENT_CREDENTIALS_MASTER_KEY_B64", adminActor(c), ctl.credentialEncryptor(req.Credentials))
+	if err != nil {
 		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "failed to create gateway credential configuration"})
 	}
 	return c.Status(http.StatusCreated).JSON(fiber.Map{"message": "gateway credential configuration created", "data": safeCredential(credential)})
@@ -129,11 +129,11 @@ func (ctl *MerchantRoutingAdminController) RotateCredential(c *fiber.Ctx) error 
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
-	credential, err := ctl.newCredential(c, createCredentialRequest{RecipientID: old.RecipientID, Provider: old.Provider, Credentials: req.Credentials, RotatedFromID: old.ID})
-	if err != nil {
+	if !validCredentialPayload(old.Provider, req.Credentials) {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway credential configuration"})
 	}
-	if err := ctl.Repo.CreateCredential(c.Context(), credential, adminActor(c)); err != nil {
+	credential, err := ctl.Repo.RotateCredential(c.Context(), old.ID, "env:PAYMENT_CREDENTIALS_MASTER_KEY_B64", adminActor(c), ctl.credentialEncryptor(req.Credentials))
+	if err != nil {
 		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "failed to rotate gateway credential configuration"})
 	}
 	return c.Status(http.StatusCreated).JSON(fiber.Map{"message": "gateway credential configuration rotated", "data": safeCredential(credential)})
@@ -165,26 +165,15 @@ func (ctl *MerchantRoutingAdminController) DisableCredential(c *fiber.Ctx) error
 	return c.JSON(fiber.Map{"message": "gateway credential configuration disabled"})
 }
 
-func (ctl *MerchantRoutingAdminController) newCredential(c *fiber.Ctx, req createCredentialRequest) (storage.GatewayCredentialConfiguration, error) {
-	if ctl == nil || ctl.Repo == nil || ctl.Cipher == nil || !validCredentialPayload(req.Provider, req.Credentials) || strings.TrimSpace(req.RecipientID) == "" {
-		return storage.GatewayCredentialConfiguration{}, errors.New("invalid credential")
+func (ctl *MerchantRoutingAdminController) credentialEncryptor(values map[string]string) storage.CredentialEncryptor {
+	return func(credential *storage.GatewayCredentialConfiguration) (string, error) {
+		payload, err := json.Marshal(values)
+		if err != nil {
+			return "", err
+		}
+		defer zero(payload)
+		return ctl.Cipher.Encrypt(payload, storage.CredentialAdditionalData(credential.ID, credential.RecipientID, credential.Provider, credential.Version))
 	}
-	version, err := ctl.Repo.NextCredentialVersion(c.Context(), req.RecipientID, req.Provider)
-	if err != nil {
-		return storage.GatewayCredentialConfiguration{}, err
-	}
-	credential := storage.GatewayCredentialConfiguration{ID: uuid.NewString(), RecipientID: strings.TrimSpace(req.RecipientID), Provider: strings.TrimSpace(req.Provider), Version: version, Status: "draft", EncryptionKeyID: "env:PAYMENT_CREDENTIALS_MASTER_KEY_B64", RotatedFromID: strings.TrimSpace(req.RotatedFromID)}
-	payload, err := json.Marshal(req.Credentials)
-	if err != nil {
-		return storage.GatewayCredentialConfiguration{}, err
-	}
-	defer zero(payload)
-	encrypted, err := ctl.Cipher.Encrypt(payload, storage.CredentialAdditionalData(credential.ID, credential.RecipientID, credential.Provider, credential.Version))
-	if err != nil {
-		return storage.GatewayCredentialConfiguration{}, err
-	}
-	credential.EncryptedCredentials = encrypted
-	return credential, nil
 }
 
 func safeCredential(credential storage.GatewayCredentialConfiguration) storage.GatewayCredentialConfiguration {

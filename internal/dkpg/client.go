@@ -81,49 +81,6 @@ func (c *Client) SourceApp() string {
 	return c.sourceApp
 }
 
-// FetchToken requests raw token payload from DK auth endpoint.
-// Why needed: debug endpoint support and token troubleshooting.
-// Called from: DKPGController.FetchToken.
-func (c *Client) FetchToken(ctx context.Context) ([]byte, error) {
-	form := url.Values{}
-	requestID := newRequestID()
-	form.Set("username", c.username)
-	form.Set("password", c.password)
-	form.Set("client_id", c.clientID)
-	form.Set("client_secret", c.clientSecret)
-	form.Set("grant_type", "password")
-	form.Set("scopes", c.scopes)
-	form.Set("source_app", c.sourceApp)
-	form.Set("request_id", requestID)
-	reqBody := form.Encode()
-	start := time.Now().UTC()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/auth/token", strings.NewReader(reqBody))
-	if err != nil {
-		c.logInternalCall(ctx, http.MethodPost, "/v1/auth/token", requestID, reqBody, err.Error(), 0, start)
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("X-gravitee-api-key", c.apiKey)
-
-	// #nosec G704 -- baseURL is operator-configured for the DKPG upstream; endpoint path is fixed.
-	res, err := c.http.Do(req)
-	if err != nil {
-		c.logInternalCall(ctx, http.MethodPost, "/v1/auth/token", requestID, reqBody, err.Error(), 0, start)
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		c.logInternalCall(ctx, http.MethodPost, "/v1/auth/token", requestID, reqBody, err.Error(), res.StatusCode, start)
-		return nil, err
-	}
-	c.logInternalCall(ctx, http.MethodPost, "/v1/auth/token", requestID, reqBody, string(body), res.StatusCode, start)
-
-	return body, nil
-}
-
 // ensureToken returns a cached access token or refreshes it from DK.
 // Why needed: all signed downstream calls require Authorization bearer token.
 // Called from: FetchPrivateKey and signedPost.
@@ -191,7 +148,7 @@ func (c *Client) ensureToken(ctx context.Context) (string, error) {
 
 // FetchPrivateKey fetches RSA signing key text from DK sign/key endpoint.
 // Why needed: backend must sign DK requests when local private key is absent.
-// Called from: DKPGController.FetchKey and ensurePrivateKey fallback path.
+// Called from: ensurePrivateKey fallback path.
 func (c *Client) FetchPrivateKey(ctx context.Context, requestID string) (string, error) {
 	token, err := c.ensureToken(ctx)
 	if err != nil {
@@ -436,20 +393,20 @@ func (c *Client) logInternalCall(ctx context.Context, method, path, requestID, r
 	if c == nil {
 		return
 	}
-	
+
 	duration := time.Since(start).Milliseconds()
 
 	if c.logRepo != nil && c.logRepo.Enabled() && ctx != nil {
 		entry := storage.LogEntry{
-			Method:       method,
-			Path:         strings.TrimSpace(path),
-			Status:       status,
-			Duration:     duration,
-			RequestID:    strings.TrimSpace(requestID),
-			ActorID:      "dkpg-client",
-			APISurface:   "internal",
-			Route:        strings.TrimSpace(path),
-			AuthResult:   "authenticated",
+			Method:     method,
+			Path:       strings.TrimSpace(path),
+			Status:     status,
+			Duration:   duration,
+			RequestID:  strings.TrimSpace(requestID),
+			ActorID:    "dkpg-client",
+			APISurface: "internal",
+			Route:      strings.TrimSpace(path),
+			AuthResult: "authenticated",
 		}
 
 		dbResBody := ""

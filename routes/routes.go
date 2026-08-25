@@ -11,7 +11,7 @@ import (
 // Why needed: centralizes endpoint mapping so request flow is predictable.
 // Called from: main() after middleware/controller construction.
 // Next flow: Fiber dispatches matching requests to mapped handlers.
-func Register(app *fiber.App, dkpgController *controllers.DKPGController, businessController *controllers.BusinessController, txListController *controllers.TransactionsListController, authController *controllers.AuthController, logsController *controllers.LogsController, appsController *controllers.AppsController, appsManagementController *controllers.AppsManagementController, internationalController *controllers.InternationalController, merchantRoutingAdminController *controllers.MerchantRoutingAdminController, dbLogger fiber.Handler, stdoutLogger fiber.Handler, adminAuth fiber.Handler, apiKeyAuth fiber.Handler, adminDebugController *controllers.AdminDebugController, seedController *controllers.SeedController, dbDebugController *controllers.DBDebugController, bizRateLimiter fiber.Handler, otpRateLimiter fiber.Handler, dkpgRateLimiter fiber.Handler, adminWriteRateLimiter fiber.Handler, appCreateRateLimiter fiber.Handler) {
+func Register(app *fiber.App, businessController *controllers.BusinessController, txListController *controllers.TransactionsListController, authController *controllers.AuthController, logsController *controllers.LogsController, appsController *controllers.AppsController, appsManagementController *controllers.AppsManagementController, internationalController *controllers.InternationalController, merchantRoutingAdminController *controllers.MerchantRoutingAdminController, dbLogger fiber.Handler, stdoutLogger fiber.Handler, adminAuth fiber.Handler, apiKeyAuth fiber.Handler, adminDebugController *controllers.AdminDebugController, seedController *controllers.SeedController, dbDebugController *controllers.DBDebugController, bizRateLimiter fiber.Handler, otpRateLimiter fiber.Handler, adminWriteRateLimiter fiber.Handler, appCreateRateLimiter fiber.Handler) {
 	_ = adminDebugController
 	_ = seedController
 	_ = dbDebugController
@@ -57,25 +57,6 @@ func Register(app *fiber.App, dkpgController *controllers.DKPGController, busine
 	adminWrite.Post("/gateway-credentials/:id/rotate", merchantRoutingAdminController.RotateCredential)
 	adminWrite.Post("/gateway-credentials/:id/activate", merchantRoutingAdminController.ActivateCredential)
 	adminWrite.Post("/gateway-credentials/:id/disable", merchantRoutingAdminController.DisableCredential)
-
-	// DKPG admin proxy endpoints - rate limited and protected by admin session auth.
-	dkpgAdmin := api.Group("/dkpg", dkpgRateLimiter, stdoutLogger)
-	dkpgAdmin.Post("/auth/token", dkpgController.FetchToken)
-	dkpgAdmin.Post("/sign/key", dkpgController.FetchKey)
-
-	// Legacy global DKPG proxy endpoints. They intentionally remain separate from
-	// the authenticated multi-merchant business API below and must not be used by
-	// external platforms for recipient-routed payments.
-	dkpg := api.Group("/dkpg", dkpgRateLimiter, stdoutLogger)
-	dkpg.Post("/account-auth/pull-payment", dkpgController.AccountAuthPullPayment)
-	dkpg.Post("/debit-request/pull-payment", dkpgController.DebitRequestPullPayment)
-	dkpg.Post("/beneficiary/account-inquiry", dkpgController.BeneficiaryAccountInquiry)
-	// Disabled for now; keep handler wired in code for future re-enable.
-	// dkpg.Post("/initiate/transaction", dkpgController.InitiateTransaction)
-	dkpg.Post("/transaction/status", dkpgController.TransactionStatus)
-	dkpg.Post("/transactions/status", dkpgController.TransactionsStatus)
-	// Disabled for now; keep handler wired in code for future re-enable.
-	// dkpg.Post("/intra-transaction/status", dkpgController.IntraTransactionStatus)
 
 	// Business endpoints - rate limited per IP before API-key auth.
 	// The OTP confirm endpoint carries an additional tighter per-IP limit to prevent OTP guessing.

@@ -188,7 +188,7 @@ func (ctrl *InternationalController) CreatePayment(c *fiber.Ctx) error {
 	}
 
 	// Check for duplicate reference_id
-	exists, err := ctrl.IntlRepo.ReferenceExists(c.Context(), req.ReferenceID)
+	exists, err := ctrl.IntlRepo.ReferenceExistsForMerchant(c.Context(), merchantIDStr, req.ReferenceID)
 	if err != nil {
 		log.Printf("Error checking reference existence: %v", err)
 		ctrl.storeFailedInternationalCreate(c.Context(), merchantIDStr, req, resolved, "SERVER_ERROR", "Internal server error")
@@ -306,6 +306,7 @@ func (ctrl *InternationalController) CreatePayment(c *fiber.Ctx) error {
 		GatewayProvider:                  resolved.Routing.Credential.Provider,
 		GatewayCredentialConfigurationID: resolved.Routing.Credential.ID,
 		GatewayCredentialVersion:         resolved.Routing.Credential.Version,
+		RoutingMode:                      "merchant",
 		Amount:                           req.Amount,
 		TotalAmount:                      totalAmount,
 		Currency:                         allowedCurrency,
@@ -370,6 +371,7 @@ func (ctrl *InternationalController) storeFailedInternationalCreate(ctx context.
 		ReferenceID:               strings.TrimSpace(req.ReferenceID),
 		MerchantID:                merchantID,
 		ExternalMerchantReference: strings.TrimSpace(req.MerchantReference),
+		RoutingMode:               "merchant",
 		Amount:                    req.Amount,
 		TotalAmount:               totalAmount,
 		Currency:                  currency,
@@ -431,25 +433,25 @@ func (ctrl *InternationalController) StartPendingStatusSync(ctx context.Context)
 func (ctrl *InternationalController) reconcileSinglePendingPayment(ctx context.Context, payment storage.InternationalPayment, checkedAt time.Time) (bool, error) {
 	stripeClient, err := ctrl.stripeClientForPayment(payment)
 	if err != nil {
-		_ = ctrl.IntlRepo.MarkStatusCheckAttempt(ctx, payment.ReferenceID, checkedAt)
+		_ = ctrl.IntlRepo.MarkStatusCheckAttempt(ctx, payment.MerchantID, payment.ReferenceID, checkedAt)
 		return false, err
 	}
 	stripeResp, err := stripeClient.CheckApplicationStatus(ctx, payment.ReferenceID)
 	if err != nil {
-		if markErr := ctrl.IntlRepo.MarkStatusCheckAttempt(ctx, payment.ReferenceID, checkedAt); markErr != nil {
+		if markErr := ctrl.IntlRepo.MarkStatusCheckAttempt(ctx, payment.MerchantID, payment.ReferenceID, checkedAt); markErr != nil {
 			return false, fmt.Errorf("status check failed: %w (mark attempt error: %v)", err, markErr)
 		}
 		return false, err
 	}
 
 	if stripeResp != nil && stripeResp.ResponseData {
-		if err := ctrl.IntlRepo.UpdatePaymentStatus(ctx, payment.ReferenceID, "completed"); err != nil {
+		if err := ctrl.IntlRepo.UpdatePaymentStatus(ctx, payment.MerchantID, payment.ReferenceID, "completed"); err != nil {
 			return false, err
 		}
 		return true, nil
 	}
 
-	if err := ctrl.IntlRepo.MarkStatusCheckAttempt(ctx, payment.ReferenceID, checkedAt); err != nil {
+	if err := ctrl.IntlRepo.MarkStatusCheckAttempt(ctx, payment.MerchantID, payment.ReferenceID, checkedAt); err != nil {
 		return false, err
 	}
 	return false, nil
@@ -459,7 +461,7 @@ func (ctrl *InternationalController) stripeClientForPayment(payment storage.Inte
 	if ctrl == nil {
 		return nil, ErrMerchantNotConfigured
 	}
-	if strings.TrimSpace(payment.GatewayCredentialConfigurationID) == "" {
+	if payment.RoutingMode == "legacy" && strings.TrimSpace(payment.GatewayCredentialConfigurationID) == "" {
 		// Rows created before merchant routing have no immutable credential link.
 		// This explicit legacy path is intentionally not used for new payments.
 		if ctrl.StripeClient == nil {
@@ -572,7 +574,8 @@ func (ctrl *InternationalController) CheckPaymentStatus(c *fiber.Ctx) error {
 	}
 
 	// Get payment from database
-	payment, err := ctrl.IntlRepo.GetPaymentByReference(c.Context(), referenceID)
+	merchantIDStr, _ := merchantID.(string)
+	payment, err := ctrl.IntlRepo.GetPaymentByReferenceForMerchant(c.Context(), merchantIDStr, referenceID)
 	if err != nil {
 		log.Printf("Error fetching payment: %v", err)
 		return c.Status(fiber.StatusNotFound).JSON(models.CheckPaymentStatusResponse{
@@ -580,17 +583,6 @@ func (ctrl *InternationalController) CheckPaymentStatus(c *fiber.Ctx) error {
 			Error: &models.APIError{
 				Code:    "PAYMENT_NOT_FOUND",
 				Message: "Payment with this reference_id does not exist",
-			},
-		})
-	}
-
-	// Verify payment belongs to merchant
-	if payment.MerchantID != merchantID.(string) {
-		return c.Status(fiber.StatusForbidden).JSON(models.CheckPaymentStatusResponse{
-			Success: false,
-			Error: &models.APIError{
-				Code:    "FORBIDDEN",
-				Message: "Payment does not belong to this merchant",
 			},
 		})
 	}
@@ -609,7 +601,7 @@ func (ctrl *InternationalController) CheckPaymentStatus(c *fiber.Ctx) error {
 			})
 		}
 		// Re-read from DB to get definitive status — background job may have concurrently updated it
-		if updated, err := ctrl.IntlRepo.GetPaymentByReference(c.Context(), referenceID); err != nil {
+		if updated, err := ctrl.IntlRepo.GetPaymentByReferenceForMerchant(c.Context(), merchantIDStr, referenceID); err != nil {
 			log.Printf("Error re-reading payment after status check reference_id=%s: %v", referenceID, err)
 		} else {
 			payment = updated

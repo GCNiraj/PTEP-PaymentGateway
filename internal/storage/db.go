@@ -90,8 +90,6 @@ func (db *DB) RunMigrations() error {
 		  AND p.order_id IS NOT NULL`,
 		// Ensure unique constraint for inquiry_id
 		`CREATE UNIQUE INDEX IF NOT EXISTS intra_inquiries_inquiry_id_key ON intra_inquiries (inquiry_id)`,
-		// Prevent duplicate external references in inquiry flow.
-		`CREATE UNIQUE INDEX IF NOT EXISTS intra_inquiries_order_id_uniq ON intra_inquiries (order_id) WHERE order_id IS NOT NULL`,
 	}
 
 	for _, migration := range migrations {

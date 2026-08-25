@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -60,6 +62,8 @@ type ResolvedGatewayConfiguration struct {
 type MerchantRoutingRepository struct {
 	DB *sql.DB
 }
+
+type CredentialEncryptor func(*GatewayCredentialConfiguration) (string, error)
 
 func NewMerchantRoutingRepository(db *DB) *MerchantRoutingRepository {
 	if db == nil {
@@ -169,20 +173,103 @@ func (r *MerchantRoutingRepository) SetMappingActive(ctx context.Context, id str
 	return nil
 }
 
-func (r *MerchantRoutingRepository) NextCredentialVersion(ctx context.Context, recipientID, provider string) (int, error) {
-	if !r.Enabled() {
-		return 0, errors.New("merchant routing repository is not configured")
+func (r *MerchantRoutingRepository) CreateDraftCredential(ctx context.Context, recipientID, provider, encryptionKeyID, actor string, encrypt CredentialEncryptor) (GatewayCredentialConfiguration, error) {
+	if !r.Enabled() || encrypt == nil {
+		return GatewayCredentialConfiguration{}, errors.New("merchant routing repository is not configured")
 	}
-	var version int
-	err := r.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM gateway_credential_configurations WHERE recipient_id=$1 AND provider=$2`, strings.TrimSpace(recipientID), strings.TrimSpace(provider)).Scan(&version)
-	return version, err
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockRecipientForCredentialChange(ctx, tx, recipientID); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	credential, err := newCredentialVersion(ctx, tx, recipientID, provider, encryptionKeyID, "")
+	if err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	credential.EncryptedCredentials, err = encrypt(&credential)
+	if err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	if err := insertCredential(ctx, tx, credential, actor); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	return credential, nil
 }
 
-func (r *MerchantRoutingRepository) CreateCredential(ctx context.Context, credential GatewayCredentialConfiguration, actor string) error {
-	if !r.Enabled() {
-		return errors.New("merchant routing repository is not configured")
+// RotateCredential creates and activates an immutable replacement while retaining
+// the previous configuration for transactions that already reference it.
+func (r *MerchantRoutingRepository) RotateCredential(ctx context.Context, credentialID, encryptionKeyID, actor string, encrypt CredentialEncryptor) (GatewayCredentialConfiguration, error) {
+	if !r.Enabled() || encrypt == nil {
+		return GatewayCredentialConfiguration{}, errors.New("merchant routing repository is not configured")
 	}
-	_, err := r.DB.ExecContext(ctx, `
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var recipientID, provider string
+	if err := tx.QueryRowContext(ctx, `SELECT recipient_id::text, provider FROM gateway_credential_configurations WHERE id=$1 FOR UPDATE`, strings.TrimSpace(credentialID)).Scan(&recipientID, &provider); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	if err := lockRecipientForCredentialChange(ctx, tx, recipientID); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	credential, err := newCredentialVersion(ctx, tx, recipientID, provider, encryptionKeyID, credentialID)
+	if err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	credential.EncryptedCredentials, err = encrypt(&credential)
+	if err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	if err := insertCredential(ctx, tx, credential, actor); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE gateway_credential_configurations SET status='retired', updated_at=now(), updated_by=$1 WHERE recipient_id=$2 AND provider=$3 AND status='active'`, strings.TrimSpace(actor), recipientID, provider); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE gateway_credential_configurations SET status='active', activated_at=now(), updated_at=now(), updated_by=$1 WHERE id=$2`, strings.TrimSpace(actor), credential.ID); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	credential.Status = "active"
+	now := time.Now().UTC()
+	credential.ActivatedAt = &now
+	if err := tx.Commit(); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	return credential, nil
+}
+
+func lockRecipientForCredentialChange(ctx context.Context, tx *sql.Tx, recipientID string) error {
+	var id string
+	return tx.QueryRowContext(ctx, `SELECT id::text FROM payment_recipients WHERE id=$1 FOR UPDATE`, strings.TrimSpace(recipientID)).Scan(&id)
+}
+
+func newCredentialVersion(ctx context.Context, tx *sql.Tx, recipientID, provider, encryptionKeyID, rotatedFromID string) (GatewayCredentialConfiguration, error) {
+	var version int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM gateway_credential_configurations WHERE recipient_id=$1 AND provider=$2`, strings.TrimSpace(recipientID), strings.TrimSpace(provider)).Scan(&version); err != nil {
+		return GatewayCredentialConfiguration{}, err
+	}
+	return GatewayCredentialConfiguration{
+		ID:              uuid.NewString(),
+		RecipientID:     strings.TrimSpace(recipientID),
+		Provider:        strings.TrimSpace(provider),
+		Version:         version,
+		Status:          "draft",
+		EncryptionKeyID: strings.TrimSpace(encryptionKeyID),
+		RotatedFromID:   strings.TrimSpace(rotatedFromID),
+	}, nil
+}
+
+func insertCredential(ctx context.Context, tx *sql.Tx, credential GatewayCredentialConfiguration, actor string) error {
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO gateway_credential_configurations
 		(id, recipient_id, provider, version, status, encrypted_credentials, encryption_key_id, rotated_from_id, created_by, updated_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,'')::uuid,$9,$9)
@@ -253,6 +340,9 @@ func (r *MerchantRoutingRepository) SetCredentialStatus(ctx context.Context, id,
 	defer func() { _ = tx.Rollback() }()
 	var recipientID, provider string
 	if err := tx.QueryRowContext(ctx, `SELECT recipient_id::text, provider FROM gateway_credential_configurations WHERE id=$1 FOR UPDATE`, strings.TrimSpace(id)).Scan(&recipientID, &provider); err != nil {
+		return err
+	}
+	if err := lockRecipientForCredentialChange(ctx, tx, recipientID); err != nil {
 		return err
 	}
 	if status == "active" {

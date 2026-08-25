@@ -17,7 +17,6 @@ import (
 	"example.com/fiber-mvc/controllers"
 	"example.com/fiber-mvc/internal/auth"
 	"example.com/fiber-mvc/internal/credentials"
-	"example.com/fiber-mvc/internal/dkpg"
 	"example.com/fiber-mvc/internal/storage"
 	gormdb "example.com/fiber-mvc/internal/storage/gorm"
 	"example.com/fiber-mvc/internal/stripe"
@@ -122,19 +121,6 @@ func main() {
 	dbRequestLogger := middleware.RequestLogger(logRepo)
 	stdoutRequestLogger := middleware.StdoutRequestLogger()
 
-	client := dkpg.NewClient(
-		cfg.DKPGBaseURL,
-		cfg.DKPGAPIKey,
-		cfg.DKPGSourceApp,
-		cfg.DKPGUsername,
-		cfg.DKPGPassword,
-		cfg.DKPGClientID,
-		cfg.DKPGClientSecret,
-		cfg.DKPGScopes,
-		cfg.DKPGPrivateKey,
-		logRepo,
-	)
-
 	// Initialize Stripe client for international payments
 	stripeClient := stripe.NewClient(cfg.StripeBaseURL, cfg.StripeAPIKey, logRepo)
 	credentialCipher, err := credentials.NewFromBase64(cfg.PaymentCredentialMasterKey)
@@ -143,10 +129,9 @@ func main() {
 	}
 
 	repo := storage.NewRepository(db)
-	dkpgController := controllers.NewDKPGController(client, repo, cfg)
 	routingRepo := storage.NewMerchantRoutingRepository(db)
 	resolver := &controllers.GatewayResolver{Repo: routingRepo, Cipher: credentialCipher, Cfg: cfg, LogRepo: logRepo}
-	businessController := controllers.NewBusinessController(client, repo, cfg, resolver)
+	businessController := controllers.NewBusinessController(repo, cfg, resolver)
 
 	txListController := controllers.NewTransactionsListController(repo)
 	appsController := controllers.NewAppsController(storage.NewAppsRepository(db))
@@ -223,10 +208,6 @@ func main() {
 		cfg.OTPRateLimitMax,
 		time.Duration(cfg.OTPRateLimitWindowSeconds)*time.Second,
 	)
-	dkpgLimiter := auth.NewIPRateLimiter(
-		cfg.DKPGRateLimitMax,
-		time.Duration(cfg.DKPGRateLimitWindowSeconds)*time.Second,
-	)
 	adminWriteLimiter := auth.NewIPRateLimiter(
 		cfg.AdminWriteRateLimitMax,
 		time.Duration(cfg.AdminWriteRateLimitWindowSeconds)*time.Second,
@@ -237,7 +218,6 @@ func main() {
 	)
 	bizRateLimit := middleware.RateLimit(bizLimiter)
 	otpRateLimit := middleware.RateLimit(otpLimiter)
-	dkpgRateLimit := middleware.RateLimit(dkpgLimiter)
 	adminWriteRateLimit := middleware.RateLimit(adminWriteLimiter)
 	appCreateRateLimit := middleware.RateLimit(appCreateLimiter)
 
@@ -248,7 +228,7 @@ func main() {
 		log.Printf("ADMIN_SIGNUP_KEY is empty; backend signup endpoint is disabled")
 	}
 
-	routes.Register(app, dkpgController, businessController, txListController, authController, logsController, appsController, appsManagementController, internationalController, merchantRoutingAdminController, dbRequestLogger, stdoutRequestLogger, adminAuth, apiKeyAuth, adminDebugController, seedController, dbDebugController, bizRateLimit, otpRateLimit, dkpgRateLimit, adminWriteRateLimit, appCreateRateLimit)
+	routes.Register(app, businessController, txListController, authController, logsController, appsController, appsManagementController, internationalController, merchantRoutingAdminController, dbRequestLogger, stdoutRequestLogger, adminAuth, apiKeyAuth, adminDebugController, seedController, dbDebugController, bizRateLimit, otpRateLimit, adminWriteRateLimit, appCreateRateLimit)
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.Redirect("/login", http.StatusFound)
 	})

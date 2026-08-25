@@ -20,6 +20,7 @@ type InternationalPayment struct {
 	GatewayProvider                  string
 	GatewayCredentialConfigurationID string
 	GatewayCredentialVersion         int
+	RoutingMode                      string
 	Amount                           float64
 	TotalAmount                      float64
 	Currency                         string
@@ -59,14 +60,17 @@ func (r *InternationalRepository) Enabled() bool {
 // Called from: InternationalController.CreatePayment.
 func (r *InternationalRepository) CreatePayment(ctx context.Context, payment InternationalPayment) error {
 	if !r.Enabled() {
-		return nil
+		return fmt.Errorf("international payment repository is not configured")
+	}
+	if err := validateMerchantRouting(payment.RoutingMode, payment.MerchantID, payment.ExternalMerchantReference, payment.RecipientID, payment.GatewayProvider, payment.GatewayCredentialConfigurationID, payment.GatewayCredentialVersion); err != nil {
+		return err
 	}
 
 	query := `
 		INSERT INTO international_payments 
-		(payment_id, stripe_session_id, reference_id, merchant_id, external_merchant_reference, recipient_id, gateway_provider, gateway_credential_configuration_id, gateway_credential_version, amount, total_amount, 
+		(payment_id, stripe_session_id, reference_id, merchant_id, external_merchant_reference, recipient_id, gateway_provider, gateway_credential_configuration_id, gateway_credential_version, routing_mode, amount, total_amount, 
 		 currency, status, error_code, error_message, description, checkout_url, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NULLIF($6,'')::uuid, $7, NULLIF($8,'')::uuid, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, $8::uuid, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 	`
 
 	_, err := r.DB.ExecContext(ctx, query,
@@ -79,6 +83,7 @@ func (r *InternationalRepository) CreatePayment(ctx context.Context, payment Int
 		payment.GatewayProvider,
 		payment.GatewayCredentialConfigurationID,
 		payment.GatewayCredentialVersion,
+		payment.RoutingMode,
 		payment.Amount,
 		payment.TotalAmount,
 		payment.Currency,
@@ -90,50 +95,20 @@ func (r *InternationalRepository) CreatePayment(ctx context.Context, payment Int
 		payment.CreatedAt,
 		payment.UpdatedAt,
 	)
-	if err == nil {
-		return nil
-	}
-
-	// Backward compatibility for schema without error columns.
-	if strings.Contains(err.Error(), "error_code") || strings.Contains(err.Error(), "error_message") {
-		fallback := `
-			INSERT INTO international_payments
-			(payment_id, stripe_session_id, reference_id, merchant_id, amount, total_amount,
-			 currency, status, description, checkout_url, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		`
-		_, err = r.DB.ExecContext(ctx, fallback,
-			payment.PaymentID,
-			payment.StripeSessionID,
-			payment.ReferenceID,
-			payment.MerchantID,
-			payment.Amount,
-			payment.TotalAmount,
-			payment.Currency,
-			payment.Status,
-			payment.Description,
-			payment.CheckoutURL,
-			payment.CreatedAt,
-			payment.UpdatedAt,
-		)
-	}
 	return err
 }
 
-// GetPaymentByReference retrieves payment by reference_id.
-// Why needed: status check endpoint uses reference_id as lookup key.
-// Called from: InternationalController.CheckPaymentStatus.
-func (r *InternationalRepository) GetPaymentByReference(ctx context.Context, referenceID string) (*InternationalPayment, error) {
+func (r *InternationalRepository) GetPaymentByReferenceForMerchant(ctx context.Context, merchantID, referenceID string) (*InternationalPayment, error) {
 	if !r.Enabled() {
 		return nil, nil
 	}
 
 	query := `
-		SELECT id, payment_id, stripe_session_id, reference_id, merchant_id, COALESCE(external_merchant_reference, ''), COALESCE(recipient_id::text, ''), COALESCE(gateway_provider, ''), COALESCE(gateway_credential_configuration_id::text, ''), COALESCE(gateway_credential_version, 0),
+		SELECT id, payment_id, stripe_session_id, reference_id, merchant_id, COALESCE(external_merchant_reference, ''), COALESCE(recipient_id::text, ''), COALESCE(gateway_provider, ''), COALESCE(gateway_credential_configuration_id::text, ''), COALESCE(gateway_credential_version, 0), routing_mode,
 		       amount, total_amount, currency, status, error_code, error_message, description, checkout_url,
 		       created_at, completed_at, last_status_check_at, updated_at
 		FROM international_payments
-		WHERE reference_id = $1
+		WHERE reference_id = $1 AND merchant_id = $2
 	`
 
 	var payment InternationalPayment
@@ -143,12 +118,12 @@ func (r *InternationalRepository) GetPaymentByReference(ctx context.Context, ref
 	var description sql.NullString
 	var checkoutURL sql.NullString
 	var lastStatusCheckAt sql.NullTime
-	err := r.DB.QueryRowContext(ctx, query, referenceID).Scan(
+	err := r.DB.QueryRowContext(ctx, query, strings.TrimSpace(referenceID), strings.TrimSpace(merchantID)).Scan(
 		&payment.ID,
 		&payment.PaymentID,
 		&stripeSessionID,
 		&payment.ReferenceID,
-		&payment.MerchantID, &payment.ExternalMerchantReference, &payment.RecipientID, &payment.GatewayProvider, &payment.GatewayCredentialConfigurationID, &payment.GatewayCredentialVersion,
+		&payment.MerchantID, &payment.ExternalMerchantReference, &payment.RecipientID, &payment.GatewayProvider, &payment.GatewayCredentialConfigurationID, &payment.GatewayCredentialVersion, &payment.RoutingMode,
 		&payment.Amount,
 		&payment.TotalAmount,
 		&payment.Currency,
@@ -177,7 +152,7 @@ func (r *InternationalRepository) GetPaymentByReference(ctx context.Context, ref
 // UpdatePaymentStatus updates payment status and completion timestamp.
 // Why needed: marks payment as completed when Stripe confirms payment.
 // Called from: InternationalController.CheckPaymentStatus.
-func (r *InternationalRepository) UpdatePaymentStatus(ctx context.Context, referenceID, status string) error {
+func (r *InternationalRepository) UpdatePaymentStatus(ctx context.Context, merchantID, referenceID, status string) error {
 	if !r.Enabled() {
 		return nil
 	}
@@ -188,25 +163,19 @@ func (r *InternationalRepository) UpdatePaymentStatus(ctx context.Context, refer
 		    completed_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE completed_at END,
 		    last_status_check_at = NOW(),
 		    updated_at = NOW()
-		WHERE reference_id = $2
+		WHERE merchant_id = $2 AND reference_id = $3
 	`
 
-	_, err := r.DB.ExecContext(ctx, query, status, referenceID)
-	return err
+	result, err := r.DB.ExecContext(ctx, query, status, merchantID, referenceID)
+	return requireOneAffectedRow(result, err)
 }
 
-// ReferenceExists checks if a reference_id has already been used.
-// Why needed: prevents duplicate payment creation.
-// Called from: InternationalController.CreatePayment.
-func (r *InternationalRepository) ReferenceExists(ctx context.Context, referenceID string) (bool, error) {
-	if !r.Enabled() {
+func (r *InternationalRepository) ReferenceExistsForMerchant(ctx context.Context, merchantID, referenceID string) (bool, error) {
+	if !r.Enabled() || strings.TrimSpace(merchantID) == "" || strings.TrimSpace(referenceID) == "" {
 		return false, nil
 	}
-
 	var count int
-	err := r.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM international_payments WHERE reference_id = $1
-	`, referenceID).Scan(&count)
+	err := r.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM international_payments WHERE merchant_id=$1 AND reference_id=$2`, strings.TrimSpace(merchantID), strings.TrimSpace(referenceID)).Scan(&count)
 	if err != nil {
 		return false, err
 	}
@@ -249,7 +218,7 @@ func (r *InternationalRepository) List(ctx context.Context, limit int, status, f
 	}
 
 	query := `
-		SELECT id, payment_id, stripe_session_id, reference_id, merchant_id, COALESCE(external_merchant_reference, ''), COALESCE(recipient_id::text, ''), COALESCE(gateway_provider, ''), COALESCE(gateway_credential_configuration_id::text, ''), COALESCE(gateway_credential_version, 0),
+		SELECT id, payment_id, stripe_session_id, reference_id, merchant_id, COALESCE(external_merchant_reference, ''), COALESCE(recipient_id::text, ''), COALESCE(gateway_provider, ''), COALESCE(gateway_credential_configuration_id::text, ''), COALESCE(gateway_credential_version, 0), routing_mode,
 		       amount, total_amount, currency, status, error_code, error_message, description, checkout_url,
 		       created_at, completed_at, last_status_check_at, updated_at
 		FROM international_payments
@@ -278,7 +247,7 @@ func (r *InternationalRepository) List(ctx context.Context, limit int, status, f
 		var checkoutURL sql.NullString
 		var lastStatusCheckAt sql.NullTime
 		if err := rows.Scan(
-			&p.ID, &p.PaymentID, &stripeSessionID, &p.ReferenceID, &p.MerchantID, &p.ExternalMerchantReference, &p.RecipientID, &p.GatewayProvider, &p.GatewayCredentialConfigurationID, &p.GatewayCredentialVersion,
+			&p.ID, &p.PaymentID, &stripeSessionID, &p.ReferenceID, &p.MerchantID, &p.ExternalMerchantReference, &p.RecipientID, &p.GatewayProvider, &p.GatewayCredentialConfigurationID, &p.GatewayCredentialVersion, &p.RoutingMode,
 			&p.Amount, &p.TotalAmount, &p.Currency, &p.Status, &errorCode, &errorMessage, &description, &checkoutURL,
 			&p.CreatedAt, &p.CompletedAt, &lastStatusCheckAt, &p.UpdatedAt,
 		); err != nil {
@@ -307,7 +276,7 @@ func (r *InternationalRepository) ListPendingForStatusCheck(ctx context.Context,
 	}
 
 	query := `
-		SELECT id, payment_id, stripe_session_id, reference_id, merchant_id, COALESCE(external_merchant_reference, ''), COALESCE(recipient_id::text, ''), COALESCE(gateway_provider, ''), COALESCE(gateway_credential_configuration_id::text, ''), COALESCE(gateway_credential_version, 0),
+		SELECT id, payment_id, stripe_session_id, reference_id, merchant_id, COALESCE(external_merchant_reference, ''), COALESCE(recipient_id::text, ''), COALESCE(gateway_provider, ''), COALESCE(gateway_credential_configuration_id::text, ''), COALESCE(gateway_credential_version, 0), routing_mode,
 		       amount, total_amount, currency, status, error_code, error_message, description, checkout_url,
 		       created_at, completed_at, last_status_check_at, updated_at
 		FROM international_payments
@@ -333,7 +302,7 @@ func (r *InternationalRepository) ListPendingForStatusCheck(ctx context.Context,
 		var checkoutURL sql.NullString
 		var lastStatusCheckAt sql.NullTime
 		if err := rows.Scan(
-			&p.ID, &p.PaymentID, &stripeSessionID, &p.ReferenceID, &p.MerchantID, &p.ExternalMerchantReference, &p.RecipientID, &p.GatewayProvider, &p.GatewayCredentialConfigurationID, &p.GatewayCredentialVersion,
+			&p.ID, &p.PaymentID, &stripeSessionID, &p.ReferenceID, &p.MerchantID, &p.ExternalMerchantReference, &p.RecipientID, &p.GatewayProvider, &p.GatewayCredentialConfigurationID, &p.GatewayCredentialVersion, &p.RoutingMode,
 			&p.Amount, &p.TotalAmount, &p.Currency, &p.Status, &errorCode, &errorMessage, &description, &checkoutURL,
 			&p.CreatedAt, &p.CompletedAt, &lastStatusCheckAt, &p.UpdatedAt,
 		); err != nil {
@@ -351,7 +320,7 @@ func (r *InternationalRepository) ListPendingForStatusCheck(ctx context.Context,
 }
 
 // MarkStatusCheckAttempt records when status reconciliation was last attempted.
-func (r *InternationalRepository) MarkStatusCheckAttempt(ctx context.Context, referenceID string, checkedAt time.Time) error {
+func (r *InternationalRepository) MarkStatusCheckAttempt(ctx context.Context, merchantID, referenceID string, checkedAt time.Time) error {
 	if !r.Enabled() {
 		return nil
 	}
@@ -359,13 +328,13 @@ func (r *InternationalRepository) MarkStatusCheckAttempt(ctx context.Context, re
 		checkedAt = time.Now().UTC()
 	}
 
-	_, err := r.DB.ExecContext(ctx, `
+	result, err := r.DB.ExecContext(ctx, `
 		UPDATE international_payments
 		SET last_status_check_at = $1,
 		    updated_at = NOW()
-		WHERE reference_id = $2
-	`, checkedAt.UTC(), referenceID)
-	return err
+		WHERE merchant_id = $2 AND reference_id = $3
+	`, checkedAt.UTC(), merchantID, referenceID)
+	return requireOneAffectedRow(result, err)
 }
 
 func nullableString(v sql.NullString) string {

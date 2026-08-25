@@ -33,23 +33,31 @@ func (r *Repository) Enabled() bool {
 // Why needed: preserves request metadata and local status tracking before/after DK calls.
 // Payload fields used: app/order/inquiry/STAN/BFS ids, amount/fee, remitter+beneficiary info,
 // descriptive fields (payment_desc/currency/status/error) and transaction datetime.
-// Called from: business and DKPG controllers during initiate/transfer flows.
-// Fallback behavior: retries for DBs missing specific new columns/index constraints.
+// Called from: merchant-routed business payment initiation.
 func (r *Repository) CreatePullPayment(ctx context.Context, payload PullPaymentRecord) error {
 	if !r.Enabled() {
-		return nil
+		return fmt.Errorf("payment repository is not configured")
+	}
+	if err := validateMerchantRouting(payload.RoutingMode, payload.ExternalAppID, payload.ExternalMerchantReference, payload.RecipientID, payload.GatewayProvider, payload.GatewayCredentialConfigurationID, payload.GatewayCredentialVersion); err != nil {
+		return err
 	}
 
 	query := `
 		insert into payment_transactions
-		(external_app_id, order_id, inquiry_id, stan_number, bfs_txn_id, bfs_request_id, bfs_order_no, amount, transaction_fee, remitter_account, remitter_name, remitter_phone,
+		(external_app_id, external_merchant_reference, recipient_id, gateway_provider, gateway_credential_configuration_id, gateway_credential_version, routing_mode,
+		 order_id, inquiry_id, stan_number, bfs_txn_id, bfs_request_id, bfs_order_no, amount, transaction_fee, remitter_account, remitter_name, remitter_phone,
 		 email_id, remitter_bank, beneficiary_account, transaction_datetime, payment_desc, currency, status, error_code, error_message, created_at, updated_at)
-		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,now(),now())
-		on conflict (stan_number) do nothing
+		values ($1,$2,$3::uuid,$4,$5::uuid,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,now(),now())
 	`
 
-	_, err := r.DB.ExecContext(ctx, query,
+	result, err := r.DB.ExecContext(ctx, query,
 		payload.ExternalAppID,
+		payload.ExternalMerchantReference,
+		payload.RecipientID,
+		payload.GatewayProvider,
+		payload.GatewayCredentialConfigurationID,
+		payload.GatewayCredentialVersion,
+		payload.RoutingMode,
 		payload.OrderID,
 		payload.InquiryID,
 		payload.STAN,
@@ -71,85 +79,22 @@ func (r *Repository) CreatePullPayment(ctx context.Context, payload PullPaymentR
 		payload.ErrorCode,
 		payload.ErrorMessage,
 	)
-	if err == nil {
-		return nil
+	if err != nil {
+		return err
 	}
-	// If DB doesn't have unique constraint, retry without ON CONFLICT.
-	if strings.Contains(err.Error(), "no unique or exclusion constraint") {
-		noConflict := `
-			insert into payment_transactions
-			(external_app_id, external_merchant_reference, recipient_id, gateway_provider, gateway_credential_configuration_id, gateway_credential_version, order_id, inquiry_id, stan_number, bfs_txn_id, bfs_request_id, bfs_order_no, amount, transaction_fee, remitter_account, remitter_name, remitter_phone,
-			 email_id, remitter_bank, beneficiary_account, transaction_datetime, payment_desc, currency, status, error_code, error_message, created_at, updated_at)
-			values ($1,$2,NULLIF($3,'')::uuid,$4,NULLIF($5,'')::uuid,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,now(),now())
-		`
-		_, err = r.DB.ExecContext(ctx, noConflict,
-			payload.ExternalAppID,
-			payload.ExternalMerchantReference,
-			payload.RecipientID,
-			payload.GatewayProvider,
-			payload.GatewayCredentialConfigurationID,
-			payload.GatewayCredentialVersion,
-			payload.OrderID,
-			payload.InquiryID,
-			payload.STAN,
-			payload.BFSTxnID,
-			payload.BFSRequestID,
-			payload.BFSOrderNo,
-			payload.Amount,
-			payload.TransactionFee,
-			payload.RemitterAccount,
-			payload.RemitterName,
-			payload.RemitterPhone,
-			payload.EmailID,
-			payload.RemitterBank,
-			payload.BeneficiaryAccount,
-			payload.TransactionDatetime,
-			payload.PaymentDesc,
-			payload.Currency,
-			payload.Status,
-			payload.ErrorCode,
-			payload.ErrorMessage,
-		)
-		if err == nil {
-			return nil
-		}
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("read pull-payment insert result: %w", err)
+	} else if affected != 1 {
+		return fmt.Errorf("pull-payment insert affected %d rows", affected)
 	}
-	// Backward compatibility: older DBs may not have newer columns yet.
-	if strings.Contains(err.Error(), "inquiry_id") || strings.Contains(err.Error(), "transaction_datetime") || strings.Contains(err.Error(), "bfs_request_id") || strings.Contains(err.Error(), "bfs_order_no") || strings.Contains(err.Error(), "email_id") {
-		fallback := `
-			insert into payment_transactions
-			(external_app_id, order_id, stan_number, bfs_txn_id, amount, transaction_fee, remitter_account, remitter_name, remitter_phone,
-			 remitter_bank, beneficiary_account, payment_desc, currency, status, error_code, error_message, created_at, updated_at)
-			values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now(),now())
-			on conflict (stan_number) do nothing
-		`
-		_, err = r.DB.ExecContext(ctx, fallback,
-			payload.ExternalAppID,
-			payload.OrderID,
-			payload.STAN,
-			payload.BFSTxnID,
-			payload.Amount,
-			payload.TransactionFee,
-			payload.RemitterAccount,
-			payload.RemitterName,
-			payload.RemitterPhone,
-			payload.RemitterBank,
-			payload.BeneficiaryAccount,
-			payload.PaymentDesc,
-			payload.Currency,
-			payload.Status,
-			payload.ErrorCode,
-			payload.ErrorMessage,
-		)
-	}
-	return err
+	return nil
 }
 
 // UpdatePullPaymentStatus updates status/error fields by STAN.
 // Why needed: tracks transition from pending to terminal result.
 // Terminal statuses COMPLETED/FAILED automatically set completed_at.
 // Called from: business and DKPG controllers after upstream responses/errors.
-func (r *Repository) UpdatePullPaymentStatus(ctx context.Context, stan, status, errorCode, errorMessage string) error {
+func (r *Repository) UpdatePullPaymentStatus(ctx context.Context, appID, stan, status, errorCode, errorMessage string) error {
 	if !r.Enabled() {
 		return nil
 	}
@@ -158,43 +103,43 @@ func (r *Repository) UpdatePullPaymentStatus(ctx context.Context, stan, status, 
 		update payment_transactions
 		set status = $1, error_code = $2, error_message = $3, updated_at = now(),
 		    completed_at = case when $1 in ('COMPLETED','FAILED') then now() else completed_at end
-		where stan_number = $4
+		where external_app_id = $4 and stan_number = $5
 	`
 
-	_, err := r.DB.ExecContext(ctx, query, status, errorCode, errorMessage, stan)
-	return err
+	result, err := r.DB.ExecContext(ctx, query, status, errorCode, errorMessage, appID, stan)
+	return requireOneAffectedRow(result, err)
 }
 
 // UpdateBFSTxnID stores bfs_txn_id against a transaction identified by STAN.
 // Called from: pull-initiation handlers once DK response contains BFS txn id.
-func (r *Repository) UpdateBFSTxnID(ctx context.Context, stan, bfsTxnID string) error {
+func (r *Repository) UpdateBFSTxnID(ctx context.Context, appID, stan, bfsTxnID string) error {
 	if !r.Enabled() {
 		return nil
 	}
 
-	_, err := r.DB.ExecContext(ctx, `update payment_transactions set bfs_txn_id=$1, updated_at=now() where stan_number=$2`, bfsTxnID, stan)
-	return err
+	result, err := r.DB.ExecContext(ctx, `update payment_transactions set bfs_txn_id=$1, updated_at=now() where external_app_id=$2 and stan_number=$3`, bfsTxnID, appID, stan)
+	return requireOneAffectedRow(result, err)
 }
 
 // UpdateBFSOrderNo stores bfs_order_no against a transaction identified by STAN.
 // Called from: pull-initiation handlers when upstream response includes order no.
-func (r *Repository) UpdateBFSOrderNo(ctx context.Context, stan, bfsOrderNo string) error {
+func (r *Repository) UpdateBFSOrderNo(ctx context.Context, appID, stan, bfsOrderNo string) error {
 	if !r.Enabled() {
 		return nil
 	}
 
-	_, err := r.DB.ExecContext(ctx, `update payment_transactions set bfs_order_no=$1, updated_at=now() where stan_number=$2`, bfsOrderNo, stan)
-	return err
+	result, err := r.DB.ExecContext(ctx, `update payment_transactions set bfs_order_no=$1, updated_at=now() where external_app_id=$2 and stan_number=$3`, bfsOrderNo, appID, stan)
+	return requireOneAffectedRow(result, err)
 }
 
 // UpdateConfirmMeta stores confirm-step metadata (bfs_request_id and bfs_order_no).
 // Called from: BusinessController.PullPaymentConfirm.
-func (r *Repository) UpdateConfirmMeta(ctx context.Context, stan, requestID, orderNo string) error {
+func (r *Repository) UpdateConfirmMeta(ctx context.Context, appID, stan, requestID, orderNo string) error {
 	if !r.Enabled() {
 		return nil
 	}
-	_, err := r.DB.ExecContext(ctx, `update payment_transactions set bfs_request_id=$1, bfs_order_no=$2, updated_at=now() where stan_number=$3`, requestID, orderNo, stan)
-	return err
+	result, err := r.DB.ExecContext(ctx, `update payment_transactions set bfs_request_id=$1, bfs_order_no=$2, updated_at=now() where external_app_id=$3 and stan_number=$4`, requestID, orderNo, appID, stan)
+	return requireOneAffectedRow(result, err)
 }
 
 // GetBFSTxnIDBySTAN retrieves previously stored bfs_txn_id for a STAN.
@@ -271,6 +216,17 @@ func (r *Repository) OrderIDExists(ctx context.Context, orderID string) (bool, e
 	return exists, nil
 }
 
+func (r *Repository) OrderIDExistsForApp(ctx context.Context, appID, orderID string) (bool, error) {
+	if !r.Enabled() || strings.TrimSpace(appID) == "" || strings.TrimSpace(orderID) == "" {
+		return false, nil
+	}
+	var exists bool
+	if err := r.DB.QueryRowContext(ctx, `select exists(select 1 from payment_transactions where external_app_id=$1 and order_id=$2)`, strings.TrimSpace(appID), strings.TrimSpace(orderID)).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // IntraInquiryOrderIDExists checks whether order_id already exists in intra_inquiries.
 // Why needed: prevents duplicate intra inquiry requests for the same external reference.
 // Called from: BusinessController.IntraInquiry.
@@ -290,6 +246,18 @@ func (r *Repository) IntraInquiryOrderIDExists(ctx context.Context, orderID stri
 		return false, nil
 	}
 	return false, err
+}
+
+func (r *Repository) IntraInquiryOrderIDExistsForApp(ctx context.Context, appID, orderID string) (bool, error) {
+	if !r.Enabled() || strings.TrimSpace(appID) == "" || strings.TrimSpace(orderID) == "" {
+		return false, nil
+	}
+	var exists bool
+	err := r.DB.QueryRowContext(ctx, `select exists(select 1 from intra_inquiries where external_app_id=$1 and order_id=$2)`, strings.TrimSpace(appID), strings.TrimSpace(orderID)).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 // UpdateOrderIDStatus updates transaction state by order_id instead of STAN.
@@ -392,6 +360,7 @@ type PullPaymentRecord struct {
 	GatewayProvider                  string
 	GatewayCredentialConfigurationID string
 	GatewayCredentialVersion         int
+	RoutingMode                      string
 	OrderID                          string
 	InquiryID                        string
 	STAN                             string
@@ -415,66 +384,76 @@ type PullPaymentRecord struct {
 	CreatedAt                        time.Time
 }
 
-// CreateIntraInquiry stores intra inquiry attempts (success and failure).
-// Why needed: inquiry step is a prerequisite for intra transfer and should be auditable.
-// Fields: inquiry_id, order_id/external_reference, beneficiary account, amount, status/error metadata.
-// Called from: BusinessController.IntraInquiry.
-func (r *Repository) CreateIntraInquiry(ctx context.Context, inquiryID, orderID, beneAccount string, amount float64, status, errorCode, errorMessage string) error {
+func validateMerchantRouting(mode, appID, merchantReference, recipientID, provider, credentialID string, credentialVersion int) error {
+	if mode != "merchant" {
+		return fmt.Errorf("new payment transactions must use merchant routing")
+	}
+	if strings.TrimSpace(appID) == "" || strings.TrimSpace(merchantReference) == "" || strings.TrimSpace(recipientID) == "" || strings.TrimSpace(provider) == "" || strings.TrimSpace(credentialID) == "" || credentialVersion <= 0 {
+		return fmt.Errorf("merchant routing metadata is incomplete")
+	}
+	return nil
+}
+
+func requireOneAffectedRow(result sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return fmt.Errorf("database update returned no result")
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read update result: %w", err)
+	}
+	if count != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+type IntraInquiryRecord struct {
+	InquiryID                        string
+	ExternalAppID                    string
+	ExternalMerchantReference        string
+	RecipientID                      string
+	GatewayProvider                  string
+	GatewayCredentialConfigurationID string
+	GatewayCredentialVersion         int
+	RoutingMode                      string
+	OrderID                          string
+	BeneficiaryAccount               string
+	Amount                           float64
+	Status                           string
+	ErrorCode                        string
+	ErrorMessage                     string
+}
+
+// CreateIntraInquiry persists an inquiry with the same immutable merchant routing
+// linkage as a payment attempt.
+func (r *Repository) CreateIntraInquiry(ctx context.Context, record IntraInquiryRecord) error {
 	if !r.Enabled() {
 		return fmt.Errorf("repository not enabled")
 	}
-
-	// Allow empty inquiry_id for failed requests - generate a unique ID
-	if inquiryID == "" {
-		inquiryID = "FAILED-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	}
-
-	query := `insert into intra_inquiries (inquiry_id, order_id, bene_account_number, amount, status, error_code, error_message, created_at) 
-	          values ($1,$2,$3,$4,$5,$6,$7,now()) 
-	          on conflict (inquiry_id) do nothing`
-	_, err := r.DB.ExecContext(ctx, query, inquiryID, orderID, beneAccount, amount, status, errorCode, errorMessage)
-
-	if err == nil {
-		return nil
-	}
-
-	// Never downgrade duplicate order_id errors; callers should surface conflict.
-	if IsDuplicateIntraInquiryOrderIDError(err) {
+	if err := validateMerchantRouting(record.RoutingMode, record.ExternalAppID, record.ExternalMerchantReference, record.RecipientID, record.GatewayProvider, record.GatewayCredentialConfigurationID, record.GatewayCredentialVersion); err != nil {
 		return err
 	}
-
-	missingOrderID := isMissingColumnError(err, "order_id")
-	missingStatusCols := isMissingColumnError(err, "status") ||
-		isMissingColumnError(err, "error_code") ||
-		isMissingColumnError(err, "error_message")
-
-	// Older schema: status columns missing, but order_id exists.
-	// Preserve order_id so external_reference still gets stored.
-	if !missingOrderID && missingStatusCols {
-		withOrderNoStatus := `insert into intra_inquiries (inquiry_id, order_id, bene_account_number, amount, created_at)
-		                      values ($1,$2,$3,$4,now())
-		                      on conflict (inquiry_id) do nothing`
-		_, err = r.DB.ExecContext(ctx, withOrderNoStatus, inquiryID, orderID, beneAccount, amount)
+	if record.InquiryID == "" {
+		record.InquiryID = "FAILED-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	result, err := r.DB.ExecContext(ctx, `
+		INSERT INTO intra_inquiries
+		(inquiry_id, external_app_id, external_merchant_reference, recipient_id, gateway_provider, gateway_credential_configuration_id, gateway_credential_version, routing_mode, order_id, bene_account_number, amount, status, error_code, error_message, created_at)
+		VALUES ($1,$2,$3,$4::uuid,$5,$6::uuid,$7,$8,$9,$10,$11,$12,$13,$14,now())
+	`, record.InquiryID, record.ExternalAppID, record.ExternalMerchantReference, record.RecipientID, record.GatewayProvider, record.GatewayCredentialConfigurationID, record.GatewayCredentialVersion, record.RoutingMode, record.OrderID, record.BeneficiaryAccount, record.Amount, record.Status, record.ErrorCode, record.ErrorMessage)
+	if err != nil {
 		return err
 	}
-
-	// Older schema: order_id missing, but status columns exist.
-	if missingOrderID && !missingStatusCols {
-		withStatusNoOrderID := `insert into intra_inquiries (inquiry_id, bene_account_number, amount, status, error_code, error_message, created_at)
-		                        values ($1,$2,$3,$4,$5,$6,now())
-		                        on conflict (inquiry_id) do nothing`
-		_, err = r.DB.ExecContext(ctx, withStatusNoOrderID, inquiryID, beneAccount, amount, status, errorCode, errorMessage)
-		return err
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("read intra-inquiry insert result: %w", err)
+	} else if affected != 1 {
+		return fmt.Errorf("intra-inquiry insert affected %d rows", affected)
 	}
-
-	// Oldest schema: both order_id and status/error columns missing.
-	if missingOrderID && missingStatusCols {
-		fallbackQuery := `insert into intra_inquiries (inquiry_id, bene_account_number, amount, created_at) values ($1,$2,$3,now()) on conflict (inquiry_id) do nothing`
-		_, err = r.DB.ExecContext(ctx, fallbackQuery, inquiryID, beneAccount, amount)
-		return err
-	}
-
-	return err
+	return nil
 }
 
 // GetIntraInquiryOrderID returns stored external reference/order_id for an inquiry id.

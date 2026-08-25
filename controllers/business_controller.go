@@ -20,7 +20,6 @@ import (
 )
 
 type BusinessController struct {
-	Client   *dkpg.Client
 	Repo     *storage.Repository
 	Cfg      config.Config
 	Resolver *GatewayResolver
@@ -28,8 +27,8 @@ type BusinessController struct {
 
 // NewBusinessController constructs the business API controller.
 // Called from: main() to wire /api/business routes.
-func NewBusinessController(client *dkpg.Client, repo *storage.Repository, cfg config.Config, resolver *GatewayResolver) *BusinessController {
-	return &BusinessController{Client: client, Repo: repo, Cfg: cfg, Resolver: resolver}
+func NewBusinessController(repo *storage.Repository, cfg config.Config, resolver *GatewayResolver) *BusinessController {
+	return &BusinessController{Repo: repo, Cfg: cfg, Resolver: resolver}
 }
 
 // PullPaymentInitiate starts pull-payment auth flow (OTP initiation).
@@ -76,7 +75,7 @@ func (ctl *BusinessController) PullPaymentInitiate(c *fiber.Ctx) error {
 	if err != nil {
 		return merchantConfigurationError(c)
 	}
-	if exists, err := ctl.Repo.OrderIDExists(common.CtxFromFiber(c), req.Reference); err != nil {
+	if exists, err := ctl.Repo.OrderIDExistsForApp(common.CtxFromFiber(c), appID, req.Reference); err != nil {
 		return sendSanitizedInternalError(c)
 	} else if exists {
 		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "external_reference already used"})
@@ -119,6 +118,7 @@ func (ctl *BusinessController) PullPaymentInitiate(c *fiber.Ctx) error {
 	payload["account_number"] = beneficiaryAccountCfg
 	payload["account_name"] = beneficiaryNameCfg
 	payload["remitter_bank_id"] = remitterBankID
+	payload["source_app"] = ctl.Resolver.Value(resolved, "source_app")
 	delete(payload, "remitter_bank_code")
 	if _, ok := payload["transaction_amount"]; !ok && req.Amount > 0 {
 		payload["transaction_amount"] = req.Amount
@@ -146,6 +146,7 @@ func (ctl *BusinessController) PullPaymentInitiate(c *fiber.Ctx) error {
 		GatewayProvider:                  resolved.Routing.Credential.Provider,
 		GatewayCredentialConfigurationID: resolved.Routing.Credential.ID,
 		GatewayCredentialVersion:         resolved.Routing.Credential.Version,
+		RoutingMode:                      "merchant",
 		OrderID:                          req.Reference,
 		STAN:                             stan,
 		BFSTxnID:                         "",
@@ -172,7 +173,7 @@ func (ctl *BusinessController) PullPaymentInitiate(c *fiber.Ctx) error {
 
 	resBytes, err := client.AccountAuthPullPayment(common.CtxFromFiber(c), payload)
 	if err != nil {
-		_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), stan, "FAILED", "", err.Error())
+		_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), appID, stan, "FAILED", "", err.Error())
 		return sendSanitizedUpstreamError(c)
 	}
 
@@ -183,12 +184,12 @@ func (ctl *BusinessController) PullPaymentInitiate(c *fiber.Ctx) error {
 		status = "FAILED"
 	}
 	if bfsTxnID != "" {
-		_ = ctl.Repo.UpdateBFSTxnID(common.CtxFromFiber(c), stan, bfsTxnID)
+		_ = ctl.Repo.UpdateBFSTxnID(common.CtxFromFiber(c), appID, stan, bfsTxnID)
 	}
 	if bfsOrderNo := common.ExtractBFSOrderNo(resBytes); bfsOrderNo != "" {
-		_ = ctl.Repo.UpdateBFSOrderNo(common.CtxFromFiber(c), stan, bfsOrderNo)
+		_ = ctl.Repo.UpdateBFSOrderNo(common.CtxFromFiber(c), appID, stan, bfsOrderNo)
 	}
-	_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), stan, status, code, message)
+	_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), appID, stan, status, code, message)
 
 	return sendSanitizedDKResponse(c, resBytes, fiber.Map{
 		"transaction_id":     stan,
@@ -218,7 +219,6 @@ func (ctl *BusinessController) PullPaymentConfirm(c *fiber.Ctx) error {
 	req := models.PullPaymentConfirmRequest{
 		TransactionID: firstNonEmpty(readString(raw, "transaction_id"), readString(raw, "reference"), readString(raw, "stan_number")),
 		OTP:           firstNonEmpty(readString(raw, "otp"), readString(raw, "bfs_remitter_Otp")),
-		ExternalAppID: readString(raw, "external_app_id"),
 		OrderID:       readString(raw, "order_id"),
 		BFSOrderNo:    firstNonEmpty(readString(raw, "bfs_orderNo"), readString(raw, "bfs_order_no")),
 		BFSTxnID:      readString(raw, "bfs_txn_id"),
@@ -261,7 +261,7 @@ func (ctl *BusinessController) PullPaymentConfirm(c *fiber.Ctx) error {
 
 	resBytes, err := client.DebitRequestPullPayment(common.CtxFromFiber(c), payload)
 	if err != nil {
-		_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), req.Reference, "FAILED", "", err.Error())
+		_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), middleware.GetAppID(c), req.Reference, "FAILED", "", err.Error())
 		return sendSanitizedUpstreamError(c)
 	}
 
@@ -270,8 +270,9 @@ func (ctl *BusinessController) PullPaymentConfirm(c *fiber.Ctx) error {
 	if code != "" && code != "0000" {
 		status = "FAILED"
 	}
-	_ = ctl.Repo.UpdateConfirmMeta(common.CtxFromFiber(c), req.Reference, requestID, bfsOrderNo)
-	_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), req.Reference, status, code, message)
+	appID := middleware.GetAppID(c)
+	_ = ctl.Repo.UpdateConfirmMeta(common.CtxFromFiber(c), appID, req.Reference, requestID, bfsOrderNo)
+	_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), appID, req.Reference, status, code, message)
 
 	return sendSanitizedDKResponse(c, resBytes, fiber.Map{
 		"transaction_id": req.Reference,
@@ -320,12 +321,13 @@ func (ctl *BusinessController) IntraInquiry(c *fiber.Ctx) error {
 	}
 
 	// Prevent duplicate external_reference usage across inquiry and transfer records.
-	if exists, err := ctl.Repo.OrderIDExists(common.CtxFromFiber(c), req.Reference); err != nil {
+	if exists, err := ctl.Repo.OrderIDExistsForApp(common.CtxFromFiber(c), middleware.GetAppID(c), req.Reference); err != nil {
 		return sendSanitizedInternalError(c)
 	} else if exists {
 		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "external_reference already used"})
 	}
-	if exists, err := ctl.Repo.IntraInquiryOrderIDExists(common.CtxFromFiber(c), req.Reference); err != nil {
+	appID := middleware.GetAppID(c)
+	if exists, err := ctl.Repo.IntraInquiryOrderIDExistsForApp(common.CtxFromFiber(c), appID, req.Reference); err != nil {
 		return sendSanitizedInternalError(c)
 	} else if exists {
 		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "external_reference already used"})
@@ -351,7 +353,21 @@ func (ctl *BusinessController) IntraInquiry(c *fiber.Ctx) error {
 	inquiryResBytes, err := client.BeneficiaryAccountInquiry(common.CtxFromFiber(c), inquiryPayload)
 	if err != nil {
 		// Store failed inquiry attempt
-		_ = ctl.Repo.CreateIntraInquiry(common.CtxFromFiber(c), "", req.Reference, ctl.Resolver.Value(resolved, "beneficiary_account"), req.TransactionAmount, "FAILED", "network_error", err.Error())
+		_ = ctl.Repo.CreateIntraInquiry(common.CtxFromFiber(c), storage.IntraInquiryRecord{
+			ExternalAppID:                    appID,
+			ExternalMerchantReference:        req.MerchantReference,
+			RecipientID:                      resolved.Routing.RecipientID,
+			GatewayProvider:                  resolved.Routing.Credential.Provider,
+			GatewayCredentialConfigurationID: resolved.Routing.Credential.ID,
+			GatewayCredentialVersion:         resolved.Routing.Credential.Version,
+			RoutingMode:                      "merchant",
+			OrderID:                          req.Reference,
+			BeneficiaryAccount:               ctl.Resolver.Value(resolved, "beneficiary_account"),
+			Amount:                           req.TransactionAmount,
+			Status:                           "FAILED",
+			ErrorCode:                        "network_error",
+			ErrorMessage:                     err.Error(),
+		})
 		return sendSanitizedUpstreamError(c)
 	}
 
@@ -365,7 +381,22 @@ func (ctl *BusinessController) IntraInquiry(c *fiber.Ctx) error {
 	}
 
 	// Store inquiry in database (all attempts, success or failure)
-	if dbErr := ctl.Repo.CreateIntraInquiry(common.CtxFromFiber(c), inquiryID, req.Reference, ctl.Resolver.Value(resolved, "beneficiary_account"), req.TransactionAmount, status, code, msg); dbErr != nil {
+	if dbErr := ctl.Repo.CreateIntraInquiry(common.CtxFromFiber(c), storage.IntraInquiryRecord{
+		InquiryID:                        inquiryID,
+		ExternalAppID:                    appID,
+		ExternalMerchantReference:        req.MerchantReference,
+		RecipientID:                      resolved.Routing.RecipientID,
+		GatewayProvider:                  resolved.Routing.Credential.Provider,
+		GatewayCredentialConfigurationID: resolved.Routing.Credential.ID,
+		GatewayCredentialVersion:         resolved.Routing.Credential.Version,
+		RoutingMode:                      "merchant",
+		OrderID:                          req.Reference,
+		BeneficiaryAccount:               ctl.Resolver.Value(resolved, "beneficiary_account"),
+		Amount:                           req.TransactionAmount,
+		Status:                           status,
+		ErrorCode:                        code,
+		ErrorMessage:                     msg,
+	}); dbErr != nil {
 		if storage.IsDuplicateIntraInquiryOrderIDError(dbErr) {
 			return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "external_reference already used"})
 		}
@@ -385,142 +416,6 @@ func (ctl *BusinessController) IntraInquiry(c *fiber.Ctx) error {
 	return sendSanitizedDKResponse(c, inquiryResBytes, fiber.Map{
 		"inquiry_id":         inquiryID,
 		"external_reference": req.Reference,
-		"status":             status,
-	})
-}
-
-// IntraTransfer initiates an intra-bank transfer using inquiry_id.
-// Why needed: business abstraction for DK initiate transaction API with local tracking.
-// Request fields:
-// - inquiry_id, transaction_amount/amount, remitter_account_number
-// - external_reference/order_id (optional here if already provided during inquiry), purpose, remarks
-// - optional remitter_account_name/source_account_name, customer_phone/phone_number/remitter_phone, email_id
-// Validation detail: if both inquiry_id and external_reference are provided, they must map to same inquiry row.
-// Response:
-// - 400 invalid JSON or missing required fields
-// - 502 upstream transfer failure
-// - 200 sanitized response envelope on upstream completion
-// Called from: POST /api/business/intra/transfer.
-// Next flow: transaction row status set to COMPLETED or FAILED (completed_at on terminal status).
-func (ctl *BusinessController) IntraTransfer(c *fiber.Ctx) error {
-	raw := map[string]any{}
-	if err := c.BodyParser(&raw); err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON"})
-	}
-	req := models.IntraTransferRequest{
-		ExternalAppID:         readString(raw, "external_app_id"),
-		ExternalReference:     firstNonEmpty(readString(raw, "external_reference"), readString(raw, "order_id")),
-		InquiryID:             readString(raw, "inquiry_id"),
-		TransactionAmount:     firstNonZero(readFloat(raw, "transaction_amount"), readFloat(raw, "amount")),
-		RemitterAccountNumber: readString(raw, "remitter_account_number"),
-		RemitterAccountName:   firstNonEmpty(readString(raw, "remitter_account_name"), readString(raw, "source_account_name")),
-		CustomerPhone:         firstNonEmpty(readString(raw, "customer_phone"), readString(raw, "phone_number"), readString(raw, "remitter_phone")),
-		EmailID:               readString(raw, "email_id"),
-		Purpose:               readString(raw, "purpose"),
-		Remarks:               readString(raw, "remarks"),
-	}
-
-	missing := make([]string, 0)
-	if req.InquiryID == "" {
-		missing = append(missing, "inquiry_id")
-	}
-	if req.TransactionAmount <= 0 {
-		missing = append(missing, "transaction_amount")
-	}
-	if req.RemitterAccountNumber == "" {
-		missing = append(missing, "remitter_account_number")
-	}
-	if len(missing) > 0 {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "missing required fields", "missing_fields": missing})
-	}
-
-	req.ExternalReference = strings.TrimSpace(req.ExternalReference)
-	storedRef := ""
-	if ctl.Repo != nil {
-		ref, err := ctl.Repo.GetIntraInquiryOrderID(common.CtxFromFiber(c), req.InquiryID)
-		if err != nil && err != sql.ErrNoRows {
-			return sendSanitizedInternalError(c)
-		}
-		storedRef = strings.TrimSpace(ref)
-	}
-	if storedRef != "" {
-		if req.ExternalReference == "" {
-			req.ExternalReference = storedRef
-		} else if req.ExternalReference != storedRef {
-			return c.Status(http.StatusConflict).JSON(fiber.Map{
-				"error": "external_reference does not match inquiry_id",
-			})
-		}
-	}
-	if req.ExternalReference == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
-			"error":          "external_reference is required",
-			"missing_fields": []string{"external_reference"},
-		})
-	}
-
-	// Create transaction record before calling DK. If this fails, abort to avoid
-	// an upstream success without a corresponding local record.
-	stan := common.GenerateSTAN(ctl.Cfg.DKPGSourceApp)
-	txnTime := time.Now().UTC()
-	err := ctl.Repo.CreatePullPayment(common.CtxFromFiber(c), storage.PullPaymentRecord{
-		ExternalAppID:       req.ExternalAppID,
-		OrderID:             req.ExternalReference,
-		InquiryID:           req.InquiryID,
-		STAN:                stan,
-		Amount:              req.TransactionAmount,
-		TransactionFee:      0,
-		RemitterAccount:     req.RemitterAccountNumber,
-		RemitterName:        req.RemitterAccountName,
-		RemitterPhone:       req.CustomerPhone,
-		EmailID:             req.EmailID,
-		RemitterBank:        ctl.Cfg.DKBeneficiaryBank,
-		BeneficiaryAccount:  ctl.Cfg.DKBeneficiaryAccount,
-		TransactionDatetime: txnTime,
-		PaymentDesc:         req.Purpose,
-		Currency:            "BTN",
-		Status:              "INTRA_INITIATED",
-	})
-	if err != nil {
-		log.Printf("ERROR: Failed to store intra transfer in DB: %v", err)
-		return sendSanitizedInternalError(c)
-	}
-
-	// Step 2: Initiate Transfer
-	transferRequestID := common.NewRequestID()
-	transferPayload := map[string]any{
-		"request_id":            transferRequestID,
-		"inquiry_id":            req.InquiryID,
-		"transaction_datetime":  txnTime.Format(time.RFC3339),
-		"stan_number":           stan,
-		"source_app":            ctl.Cfg.DKPGSourceApp,
-		"transaction_amount":    req.TransactionAmount,
-		"currency":              "BTN",
-		"payment_type":          "INTRA",
-		"source_account_name":   ctl.Cfg.DKSourceAccountName,
-		"source_account_number": req.RemitterAccountNumber,
-		"bene_cust_name":        ctl.Cfg.DKBeneficiaryName,
-		"bene_account_number":   ctl.Cfg.DKBeneficiaryAccount,
-		"bene_bank_code":        ctl.Cfg.DKBeneficiaryBank,
-		"narration":             req.Remarks,
-	}
-
-	transferResBytes, err := ctl.Client.InitiateTransaction(common.CtxFromFiber(c), transferPayload)
-	if err != nil {
-		_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), stan, "FAILED", "", err.Error())
-		return sendSanitizedUpstreamError(c)
-	}
-
-	tCode, tMsg := common.ExtractResponseCode(transferResBytes)
-	status := "COMPLETED"
-	if tCode != "0000" {
-		status = "FAILED"
-	}
-	_ = ctl.Repo.UpdatePullPaymentStatus(common.CtxFromFiber(c), stan, status, tCode, tMsg)
-
-	return sendSanitizedDKResponse(c, transferResBytes, fiber.Map{
-		"transaction_id":     stan,
-		"external_reference": req.ExternalReference,
 		"status":             status,
 	})
 }
