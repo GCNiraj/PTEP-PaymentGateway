@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -193,7 +194,13 @@ func (ctl *AuthController) Login(c *fiber.Ctx) error {
 	if !strings.EqualFold(c.Protocol(), "https") {
 		isLocal := false
 		hostname := strings.TrimSpace(c.Hostname())
-		if hostname == "localhost" {
+		// Hostname() carries the port ("localhost:5001"), which matches neither
+		// the literal below nor an address parse. Strip it, or the loopback
+		// exemption never applies and local development cannot sign in at all.
+		if host, _, err := net.SplitHostPort(hostname); err == nil {
+			hostname = host
+		}
+		if strings.EqualFold(hostname, "localhost") {
 			isLocal = true
 		} else if addr, err := netip.ParseAddr(hostname); err == nil && addr.IsLoopback() {
 			isLocal = true

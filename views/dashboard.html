@@ -46,6 +46,11 @@
         </a>
       </li>
       <li class="nav-item">
+        <a class="sidebar-link" data-tab="upi" href="#">
+          <i class="bi bi-qr-code me-2"></i>UPI payments
+        </a>
+      </li>
+      <li class="nav-item">
         <a class="sidebar-link" data-tab="logs" href="#">
           <i class="bi bi-terminal me-2"></i>Logs
         </a>
@@ -263,6 +268,71 @@
         </div>
       </div>
     </div><!-- /tab-apps -->
+
+    <!-- UPI payments.
+
+         Deliberately not a transaction table. UPI does not route through this
+         gateway and there is nothing here to list: the traveller transfers
+         directly to the property's own account, and the property confirms it.
+         A table of zeroes would read as an outage rather than as a design, and
+         a table of invented rows would be a lie. This says where UPI actually
+         lives, so nobody goes looking for it here. -->
+    <div id="tab-upi" class="tab-pane d-none">
+
+      <div class="d-flex align-items-center justify-content-between mb-4">
+        <h5 class="mb-0 page-header-title">UPI payments</h5>
+        <span class="badge bg-secondary-subtle text-secondary-emphasis">Not routed through this gateway</span>
+      </div>
+
+      <div class="alert alert-info d-flex gap-3" role="status">
+        <i class="bi bi-info-circle fs-5"></i>
+        <div>
+          <strong>UPI settles directly between the guest and the property.</strong>
+          No UPI payment reaches this gateway, so none is listed here. This
+          gateway carries bank pull payments only &mdash; those are under
+          <a href="#" class="alert-link" data-tab-jump="transactions">Transactions</a>.
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-qr-code me-2"></i>How a UPI payment happens</h6>
+              <ol class="small text-muted mb-0 ps-3">
+                <li>The property uploads its own UPI QR code in the operator portal.</li>
+                <li>The guest chooses UPI at checkout and is shown that code.</li>
+                <li>The guest pays from their own app, then submits the transaction
+                    reference, their number and a screenshot.</li>
+                <li>The booking is <em>held, not confirmed</em>, and appears in the
+                    property&rsquo;s verification queue.</li>
+                <li>The property matches it against their own account and approves
+                    or rejects it. Only then is the booking confirmed.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-shield-check me-2"></i>Why it is not here</h6>
+              <p class="small text-muted mb-2">
+                Payment settles directly to each operator and the platform is
+                never the merchant of record, so there is no merchant account for
+                this gateway to pull against and no callback to reconcile.
+              </p>
+              <p class="small text-muted mb-0">
+                Routing UPI through this gateway would need a collect/intent API
+                with a provisioned merchant per property and a settlement
+                callback. Until that exists, manual verification is the only
+                honest way to confirm one, and it lives in the operator portal.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /tab-upi -->
 
     <!-- ┌─ 4. International Tab ─────────────────────────────── -->
     <div id="tab-international" class="tab-pane d-none">

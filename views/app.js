@@ -103,6 +103,11 @@ function initTabSwitching() {
   document.querySelectorAll('.sidebar-link[data-tab]').forEach(link => {
     link.addEventListener('click', e => { e.preventDefault(); switchTab(link.dataset.tab); });
   });
+  // Links inside a pane that send the reader to another tab, so the UPI note
+  // can point at Transactions without the reader hunting for it.
+  document.querySelectorAll('[data-tab-jump]').forEach(link => {
+    link.addEventListener('click', e => { e.preventDefault(); switchTab(link.dataset.tabJump); });
+  });
 }
 
 let _loadedTabs = new Set();
