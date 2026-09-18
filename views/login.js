@@ -91,7 +91,13 @@ async function loadTurnstile() {
 }
 
 async function ensureCaptchaReady() {
-  if (!loginState.captchaEnabled) return false;
+  if (!loginState.captchaEnabled) {
+    setCaptchaStatus('error',
+      'No security check is configured on this gateway. ' +
+      'LOGIN_CAPTCHA_SITE_KEY and LOGIN_CAPTCHA_SECRET must BOTH be set — ' +
+      'one alone turns it off silently.');
+    return false;
+  }
   if (usesRecaptchaKeyFormat()) {
     setCaptchaStatus('error', 'Detected reCAPTCHA key (starts with 6L). Use Cloudflare Turnstile site key.');
     return false;
@@ -100,19 +106,43 @@ async function ensureCaptchaReady() {
     try {
       await loadTurnstile();
     } catch (_) {
-      setCaptchaStatus('error', 'Could not load Cloudflare Turnstile. Check internet/ad blocker and retry.');
+      setCaptchaStatus('error',
+        'Could not load challenges.cloudflare.com. An ad blocker, an offline ' +
+        'machine or a Content-Security-Policy without challenges.cloudflare.com ' +
+        'in script-src will each do this.');
       return false;
     }
   }
   renderCaptchaWidget();
   if (loginState.captchaWidgetID === null) {
+    setCaptchaStatus('error',
+      'Turnstile loaded but refused to render. The most common cause is this ' +
+      'hostname not being listed against the site key in the Cloudflare ' +
+      'dashboard. Site key in use: ' + loginState.captchaSiteKey);
     return false;
   }
   return Boolean(window.turnstile && loginState.captchaWidgetID !== null);
 }
 
+// A challenge that fails to appear must say so.
+//
+// Every way this can go wrong used to look identical from the page: no widget,
+// no message, a login form that works. Missing keys, an unreachable Cloudflare,
+// a blocker, a stale cached script — all silent, and all indistinguishable from
+// "this deployment has no captcha". On an administrative console for a service
+// that moves money, an absent guard that looks exactly like an intentional one
+// is the worst of the options.
+//
+// So when a challenge is configured, the block is shown and it reports where it
+// got to. Only a gateway with no captcha configured at all stays quiet.
 function refreshCaptchaVisibility() {
+  if (!loginState.captchaEnabled) {
+    captchaWrap.classList.add('d-none');
+    setCaptchaStatus('info', '');
+    return;
+  }
   if (!shouldRequireCaptcha()) {
+    // Configured, but not demanded yet — only possible above a zero threshold.
     captchaWrap.classList.add('d-none');
     setCaptchaStatus('info', '');
     return;

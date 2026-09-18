@@ -157,6 +157,12 @@ func (ctl *AuthController) loginErrorResponse(c *fiber.Ctx, status int, message,
 
 // LoginOptions exposes non-sensitive settings needed by the login UI.
 func (ctl *AuthController) LoginOptions(c *fiber.Ctx) error {
+	// Never cached. The login page decides whether to render a challenge from
+	// this answer, and a browser holding a stale copy renders the page the site
+	// used to be — no widget, no error, and nothing to suggest the page is out
+	// of date. Neither this route nor the static assets set Cache-Control, so a
+	// browser is free to apply heuristic freshness to both.
+	c.Set("Cache-Control", "no-store")
 	if ctl == nil || ctl.Captcha == nil {
 		return c.JSON(fiber.Map{
 			"captcha_enabled":        false,

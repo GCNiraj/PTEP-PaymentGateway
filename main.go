@@ -242,16 +242,29 @@ func main() {
 			return c.SendFile("./views/dashboard.html")
 		},
 	)
-	app.Get("/login", func(c *fiber.Ctx) error {
-		return c.SendFile("./views/login.html")
-	})
+	// These pages and their assets are served with no Cache-Control and no
+	// ETag, only Last-Modified. A browser is allowed to invent its own
+	// freshness from that, and the mtimes here are months old, so a stale
+	// login.js can be served for weeks without one revalidating request.
+	//
+	// That failure is invisible: the page renders, the form works, and the
+	// only symptom is behaviour from a version of the site that no longer
+	// exists — a captcha that never appears, say. Revalidate every time. These
+	// are four small files on an administrative console, not a CDN's problem.
+	asset := func(path string) fiber.Handler {
+		return func(c *fiber.Ctx) error {
+			c.Set("Cache-Control", "no-cache, must-revalidate")
+			return c.SendFile(path)
+		}
+	}
+	app.Get("/login", asset("./views/login.html"))
 	// Serve only the explicit frontend assets needed by login/dashboard pages.
 	// This avoids exposing backup/template files under views/ via directory-wide static serving.
-	app.Get("/styles.css", func(c *fiber.Ctx) error { return c.SendFile("./views/styles.css") })
-	app.Get("/app.js", func(c *fiber.Ctx) error { return c.SendFile("./views/app.js") })
-	app.Get("/charts.js", func(c *fiber.Ctx) error { return c.SendFile("./views/charts.js") })
-	app.Get("/modals.js", func(c *fiber.Ctx) error { return c.SendFile("./views/modals.js") })
-	app.Get("/login.js", func(c *fiber.Ctx) error { return c.SendFile("./views/login.js") })
+	app.Get("/styles.css", asset("./views/styles.css"))
+	app.Get("/app.js", asset("./views/app.js"))
+	app.Get("/charts.js", asset("./views/charts.js"))
+	app.Get("/modals.js", asset("./views/modals.js"))
+	app.Get("/login.js", asset("./views/login.js"))
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
