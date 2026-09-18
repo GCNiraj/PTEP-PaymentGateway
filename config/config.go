@@ -157,22 +157,32 @@ func Load() Config {
 		DBSSLMode:  getenv("DB_SSLMODE", "disable"),
 		DBTimezone: getenv("DB_TIMEZONE", ""),
 
-		AdminUsername:                   getenv("ADMIN_USERNAME", "admin"),
-		AdminPassword:                   getenv("ADMIN_PASSWORD", ""),
-		AdminPasswordHash:               getenv("ADMIN_PASSWORD_HASH", ""),
-		AdminSignupRoute:                adminSignupRoute,
-		AdminSignupKey:                  getenv("ADMIN_SIGNUP_KEY", ""),
-		JWTSecret:                       jwtSecret,
-		JWTTTLMinutes:                   atoi(getenv("JWT_TTL_MINUTES", "60"), 60),
-		JWTIssuer:                       getenv("JWT_ISSUER", "dk-gateway-admin"),
-		JWTAudience:                     getenv("JWT_AUDIENCE", "dk-gateway-admin"),
-		AuthCookieName:                  getenv("AUTH_COOKIE_NAME", "admin_session"),
-		LoginMaxAttempts:                atoi(getenv("LOGIN_MAX_ATTEMPTS", "5"), 5),
-		LoginWindowMinutes:              atoi(getenv("LOGIN_WINDOW_MINUTES", "15"), 15),
-		LoginLockMinutes:                atoi(getenv("LOGIN_LOCK_MINUTES", "15"), 15),
-		LoginCaptchaSiteKey:             getenv("LOGIN_CAPTCHA_SITE_KEY", ""),
-		LoginCaptchaSecret:              getenv("LOGIN_CAPTCHA_SECRET", ""),
-		LoginCaptchaAfterFailures:       atoi(getenv("LOGIN_CAPTCHA_AFTER_FAILURES", "3"), 3),
+		AdminUsername:       getenv("ADMIN_USERNAME", "admin"),
+		AdminPassword:       getenv("ADMIN_PASSWORD", ""),
+		AdminPasswordHash:   getenv("ADMIN_PASSWORD_HASH", ""),
+		AdminSignupRoute:    adminSignupRoute,
+		AdminSignupKey:      getenv("ADMIN_SIGNUP_KEY", ""),
+		JWTSecret:           jwtSecret,
+		JWTTTLMinutes:       atoi(getenv("JWT_TTL_MINUTES", "60"), 60),
+		JWTIssuer:           getenv("JWT_ISSUER", "dk-gateway-admin"),
+		JWTAudience:         getenv("JWT_AUDIENCE", "dk-gateway-admin"),
+		AuthCookieName:      getenv("AUTH_COOKIE_NAME", "admin_session"),
+		LoginMaxAttempts:    atoi(getenv("LOGIN_MAX_ATTEMPTS", "5"), 5),
+		LoginWindowMinutes:  atoi(getenv("LOGIN_WINDOW_MINUTES", "15"), 15),
+		LoginLockMinutes:    atoi(getenv("LOGIN_LOCK_MINUTES", "15"), 15),
+		LoginCaptchaSiteKey: getenv("LOGIN_CAPTCHA_SITE_KEY", ""),
+		LoginCaptchaSecret:  getenv("LOGIN_CAPTCHA_SECRET", ""),
+		// 0 = challenge every sign-in, including the first.
+		//
+		// A threshold above zero means the first attempts are unguarded, which
+		// is precisely the window a credential-stuffing run uses: it does not
+		// need many tries per account, it needs one try against many accounts.
+		// This is an administrator console for a service that moves money, so
+		// the door is challenged from the first knock.
+		//
+		// Harmless when no captcha is configured: Enabled() is false without
+		// both a site key and a secret, and RequiresCaptcha then always says no.
+		LoginCaptchaAfterFailures:       atoi(getenv("LOGIN_CAPTCHA_AFTER_FAILURES", "0"), 0),
 		LoginCaptchaTimeoutSeconds:      atoi(getenv("LOGIN_CAPTCHA_TIMEOUT_SECONDS", "3"), 3),
 		APIKeyAuthMaxConcurrent:         atoi(getenv("API_KEY_AUTH_MAX_CONCURRENT", "16"), 16),
 		APIKeyAuthInvalidCacheSeconds:   atoi(getenv("API_KEY_AUTH_INVALID_CACHE_SECONDS", "2"), 2),

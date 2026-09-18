@@ -70,10 +70,10 @@
                 "login"
               ]
             },
-            "description": "Captures `csrf_token` into the environment. Everything under Admin depends on this.",
+            "description": "Signs in and captures the session cookie and CSRF token every admin request below depends on. Run it first.\n\nTHE CAPTCHA TOKEN. This gateway challenges every sign-in, including the first \u2014 LOGIN_CAPTCHA_AFTER_FAILURES defaults to 0 \u2014 so the password alone is refused with 400 'captcha required'.\n\nLocally that is satisfied by any string, because development uses Cloudflare's published test secret, which accepts anything.\n\nAGAINST A REAL DEPLOYMENT THIS REQUEST CANNOT WORK, and that is the captcha doing its job: a Turnstile token is issued to a browser that solved a challenge, and no collection can forge one. To exercise the admin API against a deployment, either sign in through the dashboard and copy the session cookie into this environment, or run the collection against an environment configured with the test keys. The business endpoints in folders 6 and 7 need no session \u2014 they authenticate with an API key and are unaffected.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"{{admin_username}}\",\n  \"password\": \"{{admin_password}}\"\n}",
+              "raw": "{\n  \"username\": \"{{admin_username}}\",\n  \"password\": \"{{admin_password}}\",\n  \"captcha_token\": \"{{captcha_token}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -120,7 +120,7 @@
             "description": "Must be 401. Repeated failures lock the account \u2014 see LOGIN_MAX_ATTEMPTS.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"{{admin_username}}\",\n  \"password\": \"definitely-not-the-password\"\n}",
+              "raw": "{\n  \"username\": \"{{admin_username}}\",\n  \"password\": \"definitely-not-the-password\",\n  \"captcha_token\": \"{{captcha_token}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
