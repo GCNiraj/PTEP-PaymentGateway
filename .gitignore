@@ -1,0 +1,37 @@
+# Configuration with real values. .env.example is the committed template;
+# everything it is copied to is not.
+#
+# This service holds credentials that move money — the bank's, the card
+# provider's, and the master key that decrypts every property's payout
+# destination. None of it belongs in version control, and a leak is not
+# undone by a later commit.
+.env
+.env.*
+!.env.example
+
+# Signing keys and certificates, however they are named.
+*.pem
+*.key
+*.p12
+*.pfx
+private-key*
+*private_key*
+
+# Build output. The module is `example.com/fiber-mvc`, so `go build` with no
+# -o leaves a binary called this in the working directory.
+fiber-mvc
+/main
+/bin/
+*.exe
+*.test
+*.out
+
+# Local scratch
+*.log
+/tmp/
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
