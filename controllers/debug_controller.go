@@ -16,11 +16,11 @@ func DebugConfig(c *fiber.Ctx) error {
 	cfg := config.Load()
 	maskedKey := mask(cfg.DKPGAPIKey)
 	return c.JSON(fiber.Map{
-		"dkpg_base_url": cfg.DKPGBaseURL,
-		"dkpg_api_key_set": cfg.DKPGAPIKey != "",
+		"dkpg_base_url":       cfg.DKPGBaseURL,
+		"dkpg_api_key_set":    cfg.DKPGAPIKey != "",
 		"dkpg_api_key_masked": maskedKey,
-		"dkpg_username_set": cfg.DKPGUsername != "",
-		"dkpg_client_id_set": cfg.DKPGClientID != "",
+		"dkpg_username_set":   cfg.DKPGUsername != "",
+		"dkpg_client_id_set":  cfg.DKPGClientID != "",
 	})
 }
 

@@ -124,6 +124,8 @@ function switchTab(tab) {
   if (tab === 'transactions')  { if (!_loadedTabs.has('transactions')) { loadApps(); _loadedTabs.add('transactions'); } loadTransactions(); }
   if (tab === 'apps')          { loadApps(); }
   if (tab === 'international') { loadInternationalTransactions(); }
+  if (tab === 'upi')           { loadUpiPayments(); }
+  if (tab === 'routing')       { loadRouting(); }
   if (tab === 'logs')          { loadLogs(); }
 }
 
@@ -524,6 +526,287 @@ async function loadInternationalTransactions() {
   } catch (e) { tbody.innerHTML = emptyRow(7, 'Failed to load international transactions.'); }
 }
 
+// ── UPI payments tab ──────────────────────────────────────────
+//
+// These rows come from the booking platform, not from this gateway's database.
+// Nothing here is cached: a property can approve a payment at any moment, and a
+// stale "awaiting" on this screen would send somebody to chase a payment that
+// has already been settled.
+//
+// When the platform cannot be reached the table says so. It must never fall
+// back to an empty table, which reads as "there are no UPI payments" — the one
+// thing this screen does not know.
+
+function upiDecisionBadge(decision) {
+  const map = { approved: 'success', rejected: 'danger', awaiting: 'warning text-dark' };
+  const cls = map[String(decision).toLowerCase()] || 'secondary';
+  const label = decision === 'awaiting' ? 'Awaiting property' : decision;
+  return `<span class="badge bg-${cls} text-capitalize">${esc(label)}</span>`;
+}
+
+// Timestamps arrive as RFC 3339 UTC. Shown in the reader's own timezone,
+// because they are reconciling against a bank app on the same screen.
+function upiWhen(value) {
+  if (!value) return '—';
+  const at = new Date(value);
+  return isNaN(at) ? esc(value) : esc(at.toLocaleString());
+}
+
+function upiNotice(message, kind = 'info') {
+  const box = document.getElementById('upi-notice');
+  const text = document.getElementById('upi-notice-text');
+  if (!box || !text) return;
+  if (!message) { box.classList.add('d-none'); return; }
+  box.className = `alert alert-${kind} d-flex gap-3`;
+  text.innerHTML = message;
+}
+
+async function loadUpiPayments() {
+  const tbody = document.getElementById('upi-table-body');
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+  try {
+    const res  = await adminFetch('/api/admin/upi/payments?limit=200');
+    const data = await res.json();
+
+    if (!res.ok || data.connected === false) {
+      const detail = esc(data.message || data.error || 'the booking platform could not be reached');
+      upiNotice(`<strong>UPI records are unavailable.</strong> ${detail}`, 'warning');
+      tbody.innerHTML = emptyRow(8, 'Records could not be loaded — this is not the same as there being none.');
+      return;
+    }
+
+    const rows = data.payments || [];
+    const awaiting = rows.filter(r => r.decision === 'awaiting').length;
+    upiNotice(
+      '<strong>UPI settles directly between the guest and the property.</strong> ' +
+      'These are the payment records held by the booking platform, shown here for reference. ' +
+      (awaiting ? `<strong>${awaiting}</strong> awaiting the property&rsquo;s verification.` : 'None are awaiting verification.')
+    );
+
+    if (!rows.length) { tbody.innerHTML = emptyRow(8, 'No UPI payments submitted yet.'); return; }
+
+    tbody.innerHTML = '';
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      const screenshot = row.screenshotUrl
+        ? `<a href="${esc(row.screenshotUrl)}" target="_blank" rel="noopener noreferrer" class="small">
+             <i class="bi bi-image me-1"></i>View</a>`
+        : '<span class="text-muted">—</span>';
+      // A rejection is only meaningful with its reason, so it rides with the badge.
+      const reason = row.decisionReason
+        ? `<div class="text-muted small mt-1">${esc(row.decisionReason)}</div>` : '';
+      tr.innerHTML = `
+        <td class="font-monospace small">${esc(row.bookingReference)}</td>
+        <td class="font-monospace small">${esc(row.transactionReference)}</td>
+        <td class="font-monospace small">${esc(row.payerContact || '—')}</td>
+        <td>${esc(row.property)}</td>
+        <td class="text-end">${esc(row.amount)} <span class="text-muted">${esc(row.currency)}</span></td>
+        <td>${upiDecisionBadge(row.decision)}${reason}</td>
+        <td class="small text-muted">${upiWhen(row.submittedAt)}</td>
+        <td>${screenshot}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    upiNotice('<strong>UPI records are unavailable.</strong> The booking platform could not be reached.', 'warning');
+    tbody.innerHTML = emptyRow(8, 'Records could not be loaded — this is not the same as there being none.');
+  }
+}
+
+// ── Who gets paid ─────────────────────────────────────────────
+//
+// The property list belongs to the booking platform; what is routed belongs to
+// this gateway. This screen exists only because neither side could answer "who
+// is not set up yet" alone — so the unconfigured rows lead, and a property that
+// is ready is a quiet one.
+
+let _routingApps = [];
+
+// Which integration this screen is answering for. Routing is keyed on
+// (app, merchant_reference), so "who gets paid" is meaningless until one app is
+// named — two integrations may legitimately pay the same property into
+// different accounts.
+function routingAppId() {
+  return document.getElementById('routing-app-scope')?.value || '';
+}
+
+function routingNotice(message, kind = 'info') {
+  const box = document.getElementById('routing-notice');
+  const text = document.getElementById('routing-notice-text');
+  if (!box || !text) return;
+  if (!message) { box.classList.add('d-none'); return; }
+  box.className = `alert alert-${kind} d-flex gap-3`;
+  text.innerHTML = message;
+}
+
+function routingProvider() {
+  return document.getElementById('routing-provider')?.value || 'dkpg';
+}
+
+async function loadRouting() {
+  const tbody = document.getElementById('routing-table-body');
+  if (!tbody) return;
+  const provider = routingProvider();
+  tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+
+  // The apps this gateway knows. One of them is the scope for everything below.
+  const scope = document.getElementById('routing-app-scope');
+  try {
+    const appsRes = await adminFetch('/api/admin/apps');
+    const appsData = await appsRes.json();
+    _routingApps = (appsData.data || appsData.apps || []).filter(a => a.is_active !== false);
+  } catch (e) { _routingApps = []; }
+
+  if (scope && scope.options.length !== _routingApps.length) {
+    const previous = scope.value;
+    scope.innerHTML = _routingApps.map(a =>
+      `<option value="${esc(a.id || a.app_id)}">${esc(a.name)}</option>`).join('');
+    if (previous && _routingApps.some(a => (a.id || a.app_id) === previous)) scope.value = previous;
+  }
+  if (!_routingApps.length) {
+    routingNotice('<strong>No active apps.</strong> Routing is per app, so an integration has to exist before a property can be paid through it. Create one under <a href="#" class="alert-link" data-tab-jump="apps">Apps</a>.', 'warning');
+    tbody.innerHTML = emptyRow(6, 'No app to route for.');
+    return;
+  }
+
+  try {
+    const res = await adminFetch(`/api/admin/merchant-routing/overview?provider=${encodeURIComponent(provider)}&app_id=${encodeURIComponent(routingAppId())}`);
+    const data = await res.json();
+
+    if (!res.ok || data.connected === false) {
+      routingNotice(`<strong>Properties cannot be listed.</strong> ${esc(data.message || data.error || 'the booking platform could not be reached')}`, 'warning');
+      tbody.innerHTML = emptyRow(6, 'The property list comes from the booking platform, which did not answer.');
+      return;
+    }
+
+    const rows = data.rows || [];
+    const outstanding = rows.filter(r => (r.missing || []).length);
+    if (!rows.length) {
+      routingNotice('');
+      tbody.innerHTML = emptyRow(6, 'The booking platform lists no properties.');
+      return;
+    }
+    if (outstanding.length) {
+      routingNotice(
+        `<strong>${outstanding.length} of ${rows.length} properties cannot be paid by ${provider === 'stripe' ? 'card' : 'bank transfer'} yet.</strong> ` +
+        'Until a property is set up, a payment to it is refused rather than misrouted.', 'warning');
+    } else {
+      routingNotice(`<strong>All ${rows.length} properties are set up.</strong> Each is paid into its own account.`, 'success');
+    }
+
+    // Unconfigured first: this screen exists to show the gap, not to be tidy.
+    rows.sort((a, b) => ((b.missing || []).length ? 1 : 0) - ((a.missing || []).length ? 1 : 0));
+
+    tbody.innerHTML = '';
+    for (const row of rows) {
+      const missing = row.missing || [];
+      const wants = provider === 'stripe' ? row.acceptsCard : row.acceptsBank;
+      let status, action = '';
+      if (row.configured) {
+        status = '<span class="badge bg-success">Ready</span>';
+      } else if (!wants) {
+        status = `<span class="badge bg-secondary">Not offered</span>`;
+      } else {
+        status = `<span class="badge bg-warning text-dark">Not set up</span>` +
+                 `<div class="text-muted small mt-1">${esc(missing.join('; '))}</div>`;
+      }
+      // Only a missing mapping can be fixed here. A missing merchant reference
+      // belongs to the booking platform, and offering a button for it would
+      // promise something this screen cannot do.
+      if (!row.configured && wants && row.merchantReference) {
+        action = `<button class="btn btn-outline-primary btn-sm" data-routing-setup="${esc(row.merchantReference)}" data-routing-name="${esc(row.property)}">Set up</button>`;
+      }
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${esc(row.property)}</td>
+        <td class="font-monospace small">${esc(row.merchantReference || '—')}</td>
+        <td class="font-monospace small">${esc(row.beneficiaryHint || '—')}<div class="text-muted small">${esc(row.beneficiaryName || '')}</div></td>
+        <td class="small">${esc(row.beneficiaryBank || row.bank || '—')}</td>
+        <td>${status}</td>
+        <td class="text-end">${action}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    tbody.querySelectorAll('[data-routing-setup]').forEach(button => {
+      button.addEventListener('click', () => openRoutingForm(
+        button.getAttribute('data-routing-setup'),
+        button.getAttribute('data-routing-name'),
+        rows.find(r => r.merchantReference === button.getAttribute('data-routing-setup'))));
+    });
+  } catch (e) {
+    routingNotice('<strong>Properties cannot be listed.</strong> The booking platform could not be reached.', 'warning');
+    tbody.innerHTML = emptyRow(6, 'The property list comes from the booking platform, which did not answer.');
+  }
+}
+
+function openRoutingForm(merchantReference, name, row) {
+  const card = document.getElementById('routing-form-card');
+  if (!card) return;
+  card.classList.remove('d-none');
+  card.dataset.merchantReference = merchantReference;
+  document.getElementById('routing-form-property').textContent = name;
+  document.getElementById('routing-name').value = name;
+  document.getElementById('routing-form-error').textContent = '';
+
+  const app = _routingApps.find(a => (a.id || a.app_id) === routingAppId());
+  document.getElementById('routing-form-scope').textContent =
+    app ? `Paid on behalf of ${app.name} (${app.id || app.app_id}).` : '';
+
+  // What the property told the booking platform, so whoever types the account
+  // number can check it rather than trusting a note somewhere.
+  const hint = document.getElementById('routing-account-hint');
+  hint.textContent = (row && row.accountTail)
+    ? `The property told the platform: ${row.accountName || ''} ${row.bank || ''} ending ${row.accountTail}`.trim()
+    : '';
+
+  const provider = routingProvider();
+  card.querySelectorAll('[data-provider]').forEach(el =>
+    el.classList.toggle('d-none', el.getAttribute('data-provider') !== provider));
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function submitRouting(event) {
+  event.preventDefault();
+  const card = document.getElementById('routing-form-card');
+  const error = document.getElementById('routing-form-error');
+  const provider = routingProvider();
+  error.textContent = '';
+
+  const credentials = provider === 'dkpg'
+    ? {
+        beneficiary_account: document.getElementById('routing-account').value.trim(),
+        beneficiary_name: document.getElementById('routing-name').value.trim(),
+        beneficiary_bank: document.getElementById('routing-bank').value.trim(),
+      }
+    : {
+        submerchant_id: document.getElementById('routing-submerchant').value.trim(),
+        dk_account: document.getElementById('routing-dkaccount').value.trim(),
+      };
+
+  try {
+    const res = await adminFetch('/api/admin/merchant-routing/provision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        external_app_id: routingAppId(),
+        merchant_reference: card.dataset.merchantReference,
+        name: document.getElementById('routing-name').value.trim(),
+        provider, credentials,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) { error.textContent = data.error || 'Could not set the property up.'; return; }
+    card.classList.add('d-none');
+    document.getElementById('routing-form').reset();
+    loadRouting();
+  } catch (e) {
+    error.textContent = 'Could not reach the gateway.';
+  }
+}
+
 // ── System Logs tab ───────────────────────────────────────────
 let _logsPage = 0;          // current offset (multiples of LOG_PAGE_SIZE)
 let _logsAllLoaded = false; // true once server returns fewer rows than page
@@ -622,6 +905,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('refresh-logs-btn')?.addEventListener('click', loadLogs);
   document.getElementById('refresh-intl-btn')?.addEventListener('click', loadInternationalTransactions);
   document.getElementById('refresh-apps-btn')?.addEventListener('click', loadApps);
+  document.getElementById('refresh-upi-btn')?.addEventListener('click', loadUpiPayments);
+  document.getElementById('refresh-routing-btn')?.addEventListener('click', loadRouting);
+  ['routing-provider', 'routing-app-scope'].forEach(id =>
+    document.getElementById(id)?.addEventListener('change', () => {
+      document.getElementById('routing-form-card')?.classList.add('d-none');
+      loadRouting();
+    }));
+  document.getElementById('routing-form')?.addEventListener('submit', submitRouting);
+  document.getElementById('routing-cancel')?.addEventListener('click', () =>
+    document.getElementById('routing-form-card')?.classList.add('d-none'));
 
   // Allow pressing Enter in search boxes
   document.getElementById('txn-search')?.addEventListener('keydown', e => { if (e.key === 'Enter') loadTransactions(); });

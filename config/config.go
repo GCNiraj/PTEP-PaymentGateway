@@ -25,12 +25,6 @@ type Config struct {
 
 	DatabaseURL string
 
-	DKBeneficiaryAccount string
-	DKBeneficiaryName    string
-	DKBeneficiaryBank    string
-	DKSourceAccount      string
-	DKSourceAccountName  string
-
 	DBHost     string
 	DBPort     string
 	DBUser     string
@@ -74,17 +68,34 @@ type Config struct {
 	AppCreateRateLimitMax            int // requests allowed per window on POST /api/admin/apps/create specifically
 	AppCreateRateLimitWindowSeconds  int // window size in seconds for app create endpoint
 
-	StripeAPIKey        string
-	StripeBaseURL       string
-	StripeAgencyName    string
-	StripeSubmerchantID string
-	StripeDKAccount     string
-	StripeSuccessURL    string
-	StripeCancelURL     string
-	StripeCurrency      string
+	// The card provider, as this gateway authenticates to it. One agency, one
+	// key, the same on every payment — so they belong here and not in a
+	// recipient's record. What distinguishes a recipient is which sub-merchant
+	// the money is booked to (submerchant_id / dk_account), and that is held
+	// per recipient in the database.
+	StripeAPIKey     string
+	StripeBaseURL    string
+	StripeAgencyName string
+	StripeSuccessURL string
+	StripeCancelURL  string
+	StripeCurrency   string
 	// PaymentCredentialMasterKey is a base64-encoded 32-byte AES-256 key used
 	// only to encrypt tenant gateway credentials stored in PostgreSQL.
 	PaymentCredentialMasterKey string
+
+	// The booking platform, for records this gateway does not hold.
+	//
+	// UPI settles directly between a guest and a property, so no UPI payment
+	// ever reaches this service — but the person reconciling one comes to this
+	// dashboard to look for it. Rather than copy those rows into this database,
+	// the dashboard reads them from the platform that owns them, server-side,
+	// with the key below. Two databases, one authority for each fact.
+	//
+	// Both empty is a valid configuration: the UPI tab then explains that it is
+	// not connected, instead of showing an empty table that reads as "no
+	// payments".
+	PlatformBaseURL string
+	PlatformAPIKey  string
 
 	SecurityHeadersEnabled bool
 	CSPEnabled             bool
@@ -125,23 +136,18 @@ func Load() Config {
 	}
 
 	return Config{
-		AppName:              getenv("APP_NAME", "DK Payment Gateway Backend"),
-		Port:                 getenv("PORT", "5001"),
-		DKPGBaseURL:          getenv("DKPG_BASE_URL", "https://internal-gateway.uat.digitalkidu.bt/api/dkpg"),
-		DKPGAPIKey:           getenv("DKPG_API_KEY", ""),
-		DKPGUsername:         getenv("DKPG_USERNAME", ""),
-		DKPGPassword:         getenv("DKPG_PASSWORD", ""),
-		DKPGClientID:         getenv("DKPG_CLIENT_ID", ""),
-		DKPGClientSecret:     getenv("DKPG_CLIENT_SECRET", ""),
-		DKPGScopes:           getenv("DKPG_SCOPES", "keys:read"),
-		DKPGSourceApp:        getenv("DKPG_SOURCE_APP", "SRC_AVS_0201"),
-		DKPGPrivateKey:       privateKey,
-		DatabaseURL:          getenv("DATABASE_URL", ""),
-		DKBeneficiaryAccount: getenv("DK_BENEFICIARY_ACCOUNT", ""),
-		DKBeneficiaryName:    getenv("DK_BENEFICIARY_NAME", ""),
-		DKBeneficiaryBank:    getenv("DK_BENEFICIARY_BANK", "1060"),
-		DKSourceAccount:      getenv("DK_SOURCE_ACCOUNT", ""),
-		DKSourceAccountName:  getenv("DK_SOURCE_ACCOUNT_NAME", ""),
+		AppName:          getenv("APP_NAME", "DK Payment Gateway Backend"),
+		Port:             getenv("PORT", "5001"),
+		DKPGBaseURL:      getenv("DKPG_BASE_URL", "https://internal-gateway.uat.digitalkidu.bt/api/dkpg"),
+		DKPGAPIKey:       getenv("DKPG_API_KEY", ""),
+		DKPGUsername:     getenv("DKPG_USERNAME", ""),
+		DKPGPassword:     getenv("DKPG_PASSWORD", ""),
+		DKPGClientID:     getenv("DKPG_CLIENT_ID", ""),
+		DKPGClientSecret: getenv("DKPG_CLIENT_SECRET", ""),
+		DKPGScopes:       getenv("DKPG_SCOPES", "keys:read"),
+		DKPGSourceApp:    getenv("DKPG_SOURCE_APP", "SRC_AVS_0201"),
+		DKPGPrivateKey:   privateKey,
+		DatabaseURL:      getenv("DATABASE_URL", ""),
 
 		DBHost:     getenv("DB_HOST", ""),
 		DBPort:     getenv("DB_PORT", "5432"),
@@ -185,10 +191,10 @@ func Load() Config {
 		AppCreateRateLimitWindowSeconds:  atoi(getenv("APP_CREATE_RATE_LIMIT_WINDOW_SECONDS", "60"), 60),
 
 		StripeAPIKey:               getenv("STRIPE_API_KEY", ""),
+		PlatformBaseURL:            getenv("PLATFORM_BASE_URL", ""),
+		PlatformAPIKey:             getenv("PLATFORM_API_KEY", ""),
 		StripeBaseURL:              getenv("STRIPE_BASE_URL", "https://internal-gateway.sit.digitalkidu.bt:8082/uat/stripe/"),
 		StripeAgencyName:           getenv("STRIPE_AGENCY_NAME", ""),
-		StripeSubmerchantID:        getenv("STRIPE_SUBMERCHANT_ID", ""),
-		StripeDKAccount:            getenv("STRIPE_DK_ACCOUNT", ""),
 		StripeSuccessURL:           getenv("STRIPE_SUCCESS_URL", ""),
 		StripeCancelURL:            getenv("STRIPE_CANCEL_URL", ""),
 		StripeCurrency:             strings.ToUpper(getenv("STRIPE_CURRENCY", "USD")),

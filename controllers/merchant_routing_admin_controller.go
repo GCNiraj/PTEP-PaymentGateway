@@ -108,8 +108,11 @@ func (ctl *MerchantRoutingAdminController) CreateCredential(c *fiber.Ctx) error 
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
-	if ctl == nil || ctl.Repo == nil || ctl.Cipher == nil || !validCredentialPayload(req.Provider, req.Credentials) || strings.TrimSpace(req.RecipientID) == "" {
+	if ctl == nil || ctl.Repo == nil || ctl.Cipher == nil || strings.TrimSpace(req.RecipientID) == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway credential configuration"})
+	}
+	if !validCredentialPayload(req.Provider, req.Credentials) {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": credentialPayloadProblem(req.Provider, req.Credentials)})
 	}
 	credential, err := ctl.Repo.CreateDraftCredential(c.Context(), strings.TrimSpace(req.RecipientID), strings.TrimSpace(req.Provider), "env:PAYMENT_CREDENTIALS_MASTER_KEY_B64", adminActor(c), ctl.credentialEncryptor(req.Credentials))
 	if err != nil {
@@ -185,22 +188,90 @@ func validProvider(provider string) bool {
 	return provider == "dkpg" || provider == "stripe"
 }
 
+// Credentials that identify this gateway to a provider, rather than
+// distinguishing one recipient from another. They are identical on every
+// payment and live in the environment, so a recipient record that carries them
+// is describing something it does not get to decide, and is refused rather than
+// quietly ignored.
+var dkpgAuthKeys = []string{"api_key", "username", "password", "client_id", "client_secret", "source_app", "scopes", "private_key"}
+
+var stripeAuthKeys = []string{"api_key", "agency_name"}
+
+// sharedAuthKeys is what the environment owns for a provider.
+func sharedAuthKeys(provider string) []string {
+	if provider == "dkpg" {
+		return dkpgAuthKeys
+	}
+	return stripeAuthKeys
+}
+
+// humanList joins field names the way a sentence would: "a, b and c".
+func humanList(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	default:
+		return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
+	}
+}
+
+// recipientKeys is what a record must carry for a provider: the part that
+// actually distinguishes this recipient from the next one.
+//
+// Both providers know this gateway as a single integrator under a single
+// identity. What differs per recipient is only where that recipient's money is
+// booked — an account number on the bank side, a sub-merchant on the card side.
+func recipientKeys(provider string) []string {
+	if provider == "dkpg" {
+		// beneficiary_bank is required, though its name undersells it. On
+		// pull/initiate it is only a fallback for the remitter's bank code,
+		// which the payer normally supplies — but on intra/inquiry it IS the
+		// beneficiary's bank code, sent upstream with no fallback behind it. A
+		// record without it would take a payment and then send the bank a blank
+		// where the destination bank belongs.
+		return []string{"beneficiary_account", "beneficiary_name", "beneficiary_bank"}
+	}
+	return []string{"submerchant_id", "dk_account"}
+}
+
+// validCredentialPayload reports whether a credential describes its recipient
+// and nothing more.
 func validCredentialPayload(provider string, values map[string]string) bool {
 	if len(values) == 0 || !validProvider(provider) {
 		return false
 	}
-	required := []string{"api_key"}
-	if provider == "dkpg" {
-		required = append(required, "username", "password", "client_id", "client_secret", "source_app", "beneficiary_account", "beneficiary_name", "beneficiary_bank")
-	} else {
-		required = append(required, "agency_name", "submerchant_id", "dk_account")
-	}
-	for _, key := range required {
+	for _, key := range recipientKeys(provider) {
 		if strings.TrimSpace(values[key]) == "" {
 			return false
 		}
 	}
+	for _, key := range sharedAuthKeys(provider) {
+		if strings.TrimSpace(values[key]) != "" {
+			return false
+		}
+	}
 	return true
+}
+
+// credentialPayloadProblem says what is wrong, because "invalid gateway
+// credential configuration" sends somebody to read the source.
+func credentialPayloadProblem(provider string, values map[string]string) string {
+	if !validProvider(provider) {
+		return "provider must be dkpg or stripe"
+	}
+	label := "DKPG"
+	if provider != "dkpg" {
+		label = "Stripe"
+	}
+	for _, key := range sharedAuthKeys(provider) {
+		if strings.TrimSpace(values[key]) != "" {
+			return label + " authentication comes from this gateway's environment and is the same for every recipient; supply only " +
+				strings.Join(recipientKeys(provider), ", ") + " (remove: " + key + ")"
+		}
+	}
+	return humanList(recipientKeys(provider)) + " are required"
 }
 
 func adminActor(c *fiber.Ctx) string {

@@ -1,0 +1,2045 @@
+{
+  "info": {
+    "name": "DK Payment Gateway \u2014 Business API",
+    "description": "Every endpoint the gateway exposes, grouped by who may call it.\n\nTHREE SURFACES, THREE CREDENTIALS.\n\u2022 Public \u2014 no credential (health).\n\u2022 Business \u2014 `X-API-Key`. This is what the booking service uses.\n\u2022 Admin \u2014 a session cookie from Sign in, plus `X-CSRF-Token` on writes.\n\nRun **Admin \u2192 Sign in** first: it captures the session cookie and the CSRF token into the environment, which every admin write below depends on.\n\nWHAT 'UPSTREAM_UNAVAILABLE' MEANS. The gateway resolved your merchant, decrypted its credential and tried to reach the bank \u2014 which does not exist locally. Everything this service is responsible for worked. It is the expected result for a correctly-formed local call, not a failure.\n\nDESTRUCTIVE REQUESTS ARE SKIPPED BY DEFAULT. Regenerate key, Disable credential and Sign out would each break the rest of the run \u2014 the first invalidates the very key the business calls use. Set `allow_destructive` to `true` in the environment to run them deliberately.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 \u00b7 Public",
+      "description": "No credential needed.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            },
+            "description": "Liveness. The only endpoint that needs nothing at all."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 \u00b7 Admin \u2014 session",
+      "description": "Sign in first. The session cookie and CSRF token are captured automatically and every admin folder below depends on them. Sign out is deliberately the last folder in the collection, not here \u2014 running it early ends the session for everything after it.",
+      "item": [
+        {
+          "name": "Sign in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "Captures `csrf_token` into the environment. Everything under Admin depends on this.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{admin_username}}\",\n  \"password\": \"{{admin_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('signed in', () => pm.response.to.have.status(200));",
+                  "const csrf = pm.cookies.get('csrf_token');",
+                  "if (csrf) { pm.environment.set('csrf_token', csrf); }",
+                  "pm.test('csrf token captured', () => pm.expect(pm.environment.get('csrf_token')).to.be.a('string').and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Wrong password is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "login"
+              ]
+            },
+            "description": "Must be 401. Repeated failures lock the account \u2014 see LOGIN_MAX_ATTEMPTS.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{admin_username}}\",\n  \"password\": \"definitely-not-the-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', () => pm.expect([401]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Who am I",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/session",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "session"
+              ]
+            },
+            "description": "Reads the signed-in admin back."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 \u00b7 Admin \u2014 apps and API keys",
+      "item": [
+        {
+          "name": "List apps",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/apps",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps"
+              ]
+            },
+            "description": "Every registered client. The booking service is one of these."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create app",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/apps/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "create"
+              ]
+            },
+            "description": "Returns the API key **once**, base64 and split by `**` markers. Strip the markers and base64-decode to get the usable `sk_live_...` key. It cannot be read again \u2014 regenerate if lost.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"QA Scratch Client\",\n  \"contact_name\": \"QA\",\n  \"contact_email\": \"qa@example.bt\",\n  \"contact_phone\": \"+97517000000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 201', () => pm.expect([200, 201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get app",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/apps/{{app_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{app_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "App stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/apps/{{app_id}}/stats",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{app_id}}",
+                "stats"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Regenerate key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/apps/{{app_id}}/regenerate-key",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{app_id}}",
+                "regenerate-key"
+              ]
+            },
+            "description": "**Destructive \u2014 skipped unless `allow_destructive` is `true`.**\n\nInvalidates the old key immediately. Anything using it stops working."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Destructive. Skipped unless the environment says otherwise, because a",
+                  "// plain top-to-bottom run would otherwise invalidate the API key the rest",
+                  "// of the collection is using.",
+                  "if (String(pm.environment.get('allow_destructive')).toLowerCase() !== 'true') {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 \u00b7 Admin \u2014 merchant routing",
+      "description": "How the gateway decides whose money it is. A business call fails with MERCHANT_NOT_CONFIGURED until all three exist: a recipient, a mapping from your merchant reference to it, and an *active* credential for the provider.",
+      "item": [
+        {
+          "name": "List recipients",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/recipients",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "recipients"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create recipient",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/recipients",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "recipients"
+              ]
+            },
+            "description": "Who ultimately receives the money.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"QA Property\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.expect([201]).to.include(pm.response.code));",
+                  "const b = pm.response.json(); if (b.data && b.data.recipient_id) { pm.environment.set('recipient_id', b.data.recipient_id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List mappings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/recipient-mappings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "recipient-mappings"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create mapping",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/recipient-mappings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "recipient-mappings"
+              ]
+            },
+            "description": "Binds (app, merchant_reference) to a recipient. This is the lookup a business call performs.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"external_app_id\": \"{{app_id}}\",\n  \"merchant_reference\": \"{{merchant_reference}}\",\n  \"recipient_id\": \"{{recipient_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200, 201 or 409', () => pm.expect([200,201,409]).to.include(pm.response.code));",
+                  "// 409 means this (app, merchant_reference) is already mapped, which is",
+                  "// the correct refusal rather than a silent overwrite."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List credentials",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/gateway-credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "gateway-credentials"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create credential \u2014 dkpg",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/gateway-credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "gateway-credentials"
+              ]
+            },
+            "description": "Where this recipient's money lands. That is the whole record.\n\nDKPG issues this gateway ONE identity \u2014 api_key, username, password, client_id, client_secret, source_app \u2014 and it is identical for every recipient, so it lives in the gateway's environment (DKPG_* variables), not here. Sending any of those keys is refused, not ignored: a record that appears to carry its own credentials, but does not use them, is worse than one that never claimed to.\n\nbeneficiary_bank is optional. It is only a fallback for the remitter's bank code, which the payer normally supplies.\n\nStripe is the other way round \u2014 see the request below. It onboards each merchant separately, so a Stripe record does carry that merchant's key.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{recipient_id}}\",\n  \"provider\": \"dkpg\",\n  \"credentials\": {\n    \"beneficiary_account\": \"110158212197\",\n    \"beneficiary_name\": \"QA Property\",\n    \"beneficiary_bank\": \"1040\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.expect(pm.response.code).to.eql(201));",
+                  "const d = pm.response.json().data || {};",
+                  "pm.test('created as a draft', () => pm.expect(d.status).to.eql('draft'));",
+                  "pm.test('ciphertext is never returned', () => pm.expect(d.encrypted_credentials || '').to.eql(''));",
+                  "if (d.id) pm.collectionVariables.set('credential_id', d.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create credential \u2014 stripe",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/gateway-credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "gateway-credentials"
+              ]
+            },
+            "description": "Which sub-merchant this recipient's money is booked to. That is the whole record.\n\nThe same division as the DKPG request above. The provider knows this gateway as one agency under one key, so STRIPE_API_KEY and STRIPE_AGENCY_NAME live in the environment alongside STRIPE_BASE_URL. Sending either here is refused, not ignored.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{recipient_id}}\",\n  \"provider\": \"stripe\",\n  \"credentials\": {\n    \"submerchant_id\": \"MERCHANT_001\",\n    \"dk_account\": \"MERCHANT_001\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.expect(pm.response.code).to.eql(201));",
+                  "const d = pm.response.json().data || {};",
+                  "pm.test('created as a draft', () => pm.expect(d.status).to.eql('draft'));",
+                  "pm.test('ciphertext is never returned', () => pm.expect(d.encrypted_credentials || '').to.eql(''));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Activate credential",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/gateway-credentials/{{credential_id}}/activate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "gateway-credentials",
+                "{{credential_id}}",
+                "activate"
+              ]
+            },
+            "description": "A draft credential is not used. Activate it or routing still fails."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Disable credential",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/gateway-credentials/{{credential_id}}/disable",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "gateway-credentials",
+                "{{credential_id}}",
+                "disable"
+              ]
+            },
+            "description": "**Destructive \u2014 skipped unless `allow_destructive` is `true`.**\n\n"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Destructive. Skipped unless the environment says otherwise, because a",
+                  "// plain top-to-bottom run would otherwise invalidate the API key the rest",
+                  "// of the collection is using.",
+                  "if (String(pm.environment.get('allow_destructive')).toLowerCase() !== 'true') {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Who gets paid \u2014 overview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/merchant-routing/overview?app_id={{app_id}}&provider=dkpg",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "merchant-routing",
+                "overview"
+              ],
+              "query": [
+                {
+                  "key": "app_id",
+                  "value": "{{app_id}}"
+                },
+                {
+                  "key": "provider",
+                  "value": "dkpg"
+                }
+              ]
+            },
+            "description": "Every property the booking platform knows, joined against what is routed here, so the gap is visible.\n\nThis gateway holds the bank details; the platform holds the properties. Neither can answer 'who cannot be paid yet' alone, which is how seven of eight properties stayed unconfigured without anything saying so.\n\napp_id is REQUIRED. Routing is keyed on (app, merchant_reference) \u2014 two integrations may pay the same property into different accounts \u2014 so the question has no answer until one app is named. Without it: 400.\n\nNeeds the booking platform running (./dev/start.sh); otherwise connected is false and the tab says so rather than showing an empty table."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('connected to the booking platform', () => pm.expect(body.connected).to.eql(true));",
+                  "pm.test('rows are an array', () => pm.expect(body.rows).to.be.an('array'));",
+                  "pm.test('counts ready against total', () => {",
+                  "  pm.expect(body.ready).to.be.a('number');",
+                  "  pm.expect(body.total).to.be.a('number');",
+                  "  pm.expect(body.ready).to.be.at.most(body.total);",
+                  "});",
+                  "if ((body.rows || []).length) {",
+                  "  const row = body.rows[0];",
+                  "  pm.test('names the property and its merchant reference', () => {",
+                  "    pm.expect(row.property).to.be.a('string').and.not.empty;",
+                  "  });",
+                  "  pm.test('never returns a full beneficiary account', () => {",
+                  "    if (row.beneficiaryHint) pm.expect(row.beneficiaryHint).to.match(/^[*\\u2022]/);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5 \u00b7 Admin \u2014 records",
+      "item": [
+        {
+          "name": "Transactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "transactions"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transaction by id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/transactions/{{transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "transactions",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search transactions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/transactions/search",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "transactions",
+                "search"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"limit\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/stats",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stats"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Daily stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/stats/daily",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "stats",
+                "daily"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/logs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "logs"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search logs",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/logs/search",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "logs",
+                "search"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"limit\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "International transactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/international/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "international",
+                "transactions"
+              ]
+            },
+            "description": "Card payments. Empty until one is made."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "UPI payments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/upi/payments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "upi",
+                "payments"
+              ]
+            },
+            "description": "UPI payment records, read live from the booking platform.\n\nNo UPI money passes through this gateway \u2014 the guest pays the property's own account directly \u2014 so there is no transaction here to settle or refund. These are the records: the reference the guest gave, the number to ring them on, whether the property has approved it, and where the screenshot is.\n\nThis gateway holds none of it. It calls the booking platform server-side with a shared key (PLATFORM_API_KEY here, INTERNAL_API_KEY there) and passes the answer through. Nothing is cached.\n\n`connected: false` with 502 means the booking platform could not be reached. That is a real failure and the dashboard shows it as one \u2014 it must never be mistaken for 'there are no UPI payments'.\n\nStart the booking service (./dev/start.sh) before running this."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const body = pm.response.json();",
+                  "pm.test('connected to the booking platform', () => pm.expect(body.connected).to.eql(true));",
+                  "pm.test('records are an array', () => pm.expect(body.payments).to.be.an('array'));",
+                  "if ((body.payments || []).length) {",
+                  "  const row = body.payments[0];",
+                  "  pm.test('carries the reference to search a bank for', () => pm.expect(row.transactionReference).to.be.a('string').and.not.empty);",
+                  "  pm.test('carries the property and the decision', () => {",
+                  "    pm.expect(row.property).to.be.a('string').and.not.empty;",
+                  "    pm.expect(['awaiting','approved','rejected']).to.include(row.decision);",
+                  "  });",
+                  "  pm.test('screenshot points at this gateway, not the platform', () => {",
+                  "    if (row.screenshotUrl) pm.expect(row.screenshotUrl).to.include('/api/admin/upi/payments/');",
+                  "  });",
+                  "  pm.collectionVariables.set('upi_booking_reference', row.bookingReference);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "UPI payment screenshot",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/upi/payments/{{upi_booking_reference}}/screenshot",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "upi",
+                "payments",
+                "{{upi_booking_reference}}",
+                "screenshot"
+              ]
+            },
+            "description": "The guest's own screenshot of the transfer, proxied from the booking platform.\n\nA proxy rather than a redirect, so the shared key never reaches a browser. The reference is set by the request above; run that one first.\n\nThis is a file a stranger uploaded, served inside an administrative page, so the response is pinned down: only image/png or image/jpeg is accepted from the platform, and it comes back with `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: default-src 'none'; sandbox` \u2014 stricter than this site's own policy, and it is not overwritten by it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect([200]).to.include(pm.response.code));",
+                  "pm.test('is an image', () => pm.expect(pm.response.headers.get('Content-Type')).to.match(/^image\\/(png|jpeg)$/));",
+                  "pm.test('is never sniffed', () => pm.expect(pm.response.headers.get('X-Content-Type-Options')).to.eql('nosniff'));",
+                  "pm.test('is never cached', () => pm.expect(pm.response.headers.get('Cache-Control')).to.eql('no-store'));",
+                  "pm.test('is sandboxed', () => pm.expect(pm.response.headers.get('Content-Security-Policy')).to.include('sandbox'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6 \u00b7 Business \u2014 bank transfer",
+      "description": "`X-API-Key` only. This is exactly what the booking service calls.",
+      "item": [
+        {
+          "name": "Pull \u00b7 initiate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/pull/initiate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "pull",
+                "initiate"
+              ]
+            },
+            "description": "Starts a debit and sends the account holder a one-time code. Locally expect UPSTREAM_UNAVAILABLE \u2014 see the collection description.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_reference\": \"{{merchant_reference}}\",\n  \"external_reference\": \"QA-{{$timestamp}}\",\n  \"transaction_amount\": 100.0,\n  \"purpose\": \"QA test\",\n  \"email_id\": \"qa@example.bt\",\n  \"remitter_account_number\": \"1234567890\",\n  \"remitter_account_name\": \"QA Tester\",\n  \"customer_phone\": \"17123456\",\n  \"remitter_bank_code\": \"1010\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 400 or 502 or 503', () => pm.expect([200, 400, 502, 503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pull \u00b7 confirm",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/pull/confirm",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "pull",
+                "confirm"
+              ]
+            },
+            "description": "Confirms with the code. Rate limited harder than everything else, deliberately \u2014 it is the one endpoint worth guessing at.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\",\n  \"otp\": \"123456\",\n  \"bfs_txn_id\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 400 or 502 or 503', () => pm.expect([200, 400, 502, 503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Status \u00b7 same day",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/status/same-day",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "status",
+                "same-day"
+              ]
+            },
+            "description": "Reads a payment's settled state, independently of the confirm call.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\",\n  \"external_reference\": \"QA-001\",\n  \"bene_account_number\": \"1234567890\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200, 400, 404, 502 or 503', () => pm.expect([200,400,404,502,503]).to.include(pm.response.code));",
+                  "// 404 is the honest answer while `transaction_id` is empty: there is no",
+                  "// such payment to report on. Run Pull \u00b7 initiate first and set the id."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Status \u00b7 later",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/status/later",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "status",
+                "later"
+              ]
+            },
+            "description": "Same, for a payment from a previous day.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction_id\": \"{{transaction_id}}\",\n  \"external_reference\": \"QA-001\",\n  \"transaction_date\": \"2026-09-17\",\n  \"bene_account_number\": \"1234567890\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200, 400, 404, 502 or 503', () => pm.expect([200,400,404,502,503]).to.include(pm.response.code));",
+                  "// 404 is the honest answer while `transaction_id` is empty: there is no",
+                  "// such payment to report on. Run Pull \u00b7 initiate first and set the id."
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Intra \u00b7 inquiry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/intra/inquiry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "intra",
+                "inquiry"
+              ]
+            },
+            "description": " A 409 means this external_reference is already in flight \u2014 the gateway will not run the same inquiry twice.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_reference\": \"{{merchant_reference}}\",\n  \"external_reference\": \"QA-001\",\n  \"transaction_amount\": 100.0,\n  \"remitter_account_number\": \"1234567890\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200, 400, 409, 502 or 503', () => pm.expect([200,400,409,502,503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7 \u00b7 Business \u2014 international cards",
+      "item": [
+        {
+          "name": "Create payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/payments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments"
+              ]
+            },
+            "description": "Opens a hosted card session. **USD only**, minimum 1.00 \u2014 the booking service converts from ngultrum before calling this. Returns a checkout_url to send the payer to.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_reference\": \"{{merchant_reference}}\",\n  \"amount\": 25.0,\n  \"reference_id\": \"QA-INTL-{{$timestamp}}\",\n  \"description\": \"QA test payment\",\n  \"success_url\": \"https://example.bt/paid\",\n  \"cancel_url\": \"https://example.bt/cancelled\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 201 or 400 or 502 or 503', () => pm.expect([200, 201, 400, 502, 503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payment status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/payments/{{payment_reference}}/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{payment_reference}}",
+                "status"
+              ]
+            },
+            "description": "Reads it back. 'completed' is the only status that means paid. 404 for a reference this app has never created."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8 \u00b7 Refusals worth checking",
+      "description": "These must fail, and fail in the documented way.",
+      "item": [
+        {
+          "name": "No API key \u2192 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/status/same-day",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "status",
+                "same-day"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', () => pm.expect([401]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown merchant \u2192 MERCHANT_NOT_CONFIGURED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/pull/initiate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "pull",
+                "initiate"
+              ]
+            },
+            "description": "The gateway will not move money it cannot attribute.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_reference\": \"no-such-merchant\",\n  \"external_reference\": \"QA-X\",\n  \"transaction_amount\": 100.0,\n  \"purpose\": \"QA\",\n  \"email_id\": \"qa@example.bt\",\n  \"remitter_account_number\": \"1234567890\",\n  \"remitter_account_name\": \"QA\",\n  \"customer_phone\": \"17123456\",\n  \"remitter_bank_code\": \"1010\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.expect([400]).to.include(pm.response.code));",
+                  "pm.test('names the cause', () => pm.expect(pm.response.text()).to.include('MERCHANT_NOT_CONFIGURED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Card under the minimum \u2192 INVALID_AMOUNT",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/payments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments"
+              ]
+            },
+            "description": "Minimum is 1.00 USD.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_reference\": \"{{merchant_reference}}\",\n  \"amount\": 0.1,\n  \"reference_id\": \"QA-LOW-{{$timestamp}}\",\n  \"description\": \"below minimum\",\n  \"success_url\": \"https://example.bt/ok\",\n  \"cancel_url\": \"https://example.bt/no\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.expect([400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin write without CSRF \u2192 refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/recipients",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "recipients"
+              ]
+            },
+            "description": "Admin writes require the CSRF header even with a valid session.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"should not be created\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400 or 401 or 403', () => pm.expect([400, 401, 403]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "UPI screenshot for a booking that does not exist",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/upi/payments/PP-2026-000000000000DEAD/screenshot",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "upi",
+                "payments",
+                "PP-2026-000000000000DEAD",
+                "screenshot"
+              ]
+            },
+            "description": "404, not an empty image and not a 403. A 403 would confirm the booking exists, which is the thing a stranger guessing references is trying to learn."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.expect(pm.response.code).to.eql(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DKPG credential carrying shared authentication",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/gateway-credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "gateway-credentials"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{recipient_id}}\",\n  \"provider\": \"dkpg\",\n  \"credentials\": {\n    \"beneficiary_account\": \"110158212197\",\n    \"beneficiary_name\": \"QA Property\",\n    \"username\": \"PG_AVS\",\n    \"password\": \"p@PG1234\",\n    \"beneficiary_bank\": \"1040\"\n  }\n}"
+            },
+            "description": "400, and the message names the offending key.\n\nThe bank knows one integrator, so authentication belongs to the gateway, not to a recipient. Accepting these fields and then ignoring them would let somebody believe one hotel pays through credentials of its own."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.expect(pm.response.code).to.eql(400));",
+                  "pm.test('names the offending key', () => pm.expect(pm.response.json().error).to.include('username'));",
+                  "pm.test('says where authentication lives', () => pm.expect(pm.response.json().error).to.include('environment'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stripe credential carrying shared authentication",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/gateway-credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "gateway-credentials"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_id\": \"{{recipient_id}}\",\n  \"provider\": \"stripe\",\n  \"credentials\": {\n    \"submerchant_id\": \"MERCHANT_001\",\n    \"dk_account\": \"MERCHANT_001\",\n    \"api_key\": \"sk-test\"\n  }\n}"
+            },
+            "description": "400, naming api_key. The card provider knows one agency under one key; a recipient record says only which sub-merchant it is."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.expect(pm.response.code).to.eql(400));",
+                  "pm.test('names the offending key', () => pm.expect(pm.response.json().error).to.include('api_key'));",
+                  "pm.test('says where authentication lives', () => pm.expect(pm.response.json().error).to.include('environment'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Routing overview without an app",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/merchant-routing/overview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "merchant-routing",
+                "overview"
+              ]
+            },
+            "description": "400. Routing is per app, so without one named there is no single answer. An earlier version collapsed the apps and showed whichever mapping came last \u2014 a screen that could name the wrong bank account with complete confidence. It refuses now."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.expect(pm.response.code).to.eql(400));",
+                  "pm.test('says why', () => pm.expect(pm.response.json().error).to.include('app_id'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "9 \u00b7 Admin \u2014 sign out",
+      "description": "Last on purpose. Ends the session the admin folders used.",
+      "item": [
+        {
+          "name": "Sign out",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "logout"
+              ]
+            },
+            "description": "**Destructive \u2014 skipped unless `allow_destructive` is `true`.**\n\nEnds the session. Run this last, or re-run Sign in afterwards."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Destructive. Skipped unless the environment says otherwise, because a",
+                  "// plain top-to-bottom run would otherwise invalidate the API key the rest",
+                  "// of the collection is using.",
+                  "if (String(pm.environment.get('allow_destructive')).toLowerCase() !== 'true') {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 204', () => pm.expect([200, 204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

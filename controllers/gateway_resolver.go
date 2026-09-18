@@ -74,24 +74,108 @@ func (r *GatewayResolver) decrypt(routing *storage.ResolvedGatewayConfiguration)
 	return &ResolvedGateway{Routing: routing, Values: values}, nil
 }
 
+// ErrGatewayNotConfigured means this gateway has no identity of its own with
+// the provider. Distinct from ErrMerchantNotConfigured, which means the caller
+// named a merchant nobody has set up: one is our misconfiguration, the other is
+// theirs, and answering the same way for both is how a typo spends an afternoon
+// being mistaken for a missing mapping.
+var ErrGatewayNotConfigured = errors.New("this gateway's provider credentials are not configured in the environment")
+
+// requireEnv reports the first named value that is empty.
+func requireEnv(values map[string]string) error {
+	for name, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%w: %s is empty", ErrGatewayNotConfigured, name)
+		}
+	}
+	return nil
+}
+
+// SourceApp is this gateway's registered application code with the bank. It
+// identifies *us* to DKPG and is the same on every payment, so it comes from
+// the environment rather than from a recipient's record.
+func (r *GatewayResolver) SourceApp() string {
+	if r == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.Cfg.DKPGSourceApp)
+}
+
+// DKPGClient builds a bank client for one resolved recipient.
+//
+// WHO IS CALLING vs WHO IS PAID. These are two different questions and they now
+// have two different answers. The bank knows one integrator — this gateway —
+// and issues it one set of credentials; those live in the environment. Each
+// recipient record says only where the money lands.
+//
+// It used to be one answer: every recipient carried a full copy of the bank
+// credentials alongside its own account number. That meant the same password
+// encrypted once per hotel, a rotation that was N operations with no way to
+// tell a half-finished one from a finished one, and a typo in any copy failing
+// exactly like a merchant that was never configured.
+//
+// A recipient's stored blob may still contain those old auth fields. They are
+// inert — nothing below reads them — and CreateCredential now refuses new ones,
+// so they drain away as credentials are rotated.
 func (r *GatewayResolver) DKPGClient(resolved *ResolvedGateway) (*dkpg.Client, error) {
 	if resolved == nil || resolved.Routing == nil || resolved.Routing.Credential.Provider != "dkpg" {
 		return nil, ErrMerchantNotConfigured
 	}
-	v := resolved.Values
-	for _, key := range []string{"api_key", "username", "password", "client_id", "client_secret", "source_app", "beneficiary_account", "beneficiary_name", "beneficiary_bank"} {
-		if strings.TrimSpace(v[key]) == "" {
-			return nil, fmt.Errorf("DKPG credential configuration is incomplete")
+	// Where the money goes. Per recipient, and the only reason this record exists.
+	for _, key := range []string{"beneficiary_account", "beneficiary_name", "beneficiary_bank"} {
+		if strings.TrimSpace(resolved.Values[key]) == "" {
+			return nil, fmt.Errorf("DKPG credential configuration is incomplete: %s is required", key)
 		}
 	}
-	return dkpg.NewClient(r.Cfg.DKPGBaseURL, v["api_key"], v["source_app"], v["username"], v["password"], v["client_id"], v["client_secret"], v["scopes"], v["private_key"], r.LogRepo), nil
+	// Who is asking. Shared, from the environment.
+	cfg := r.Cfg
+	if err := requireEnv(map[string]string{
+		"DKPG_BASE_URL": cfg.DKPGBaseURL, "DKPG_API_KEY": cfg.DKPGAPIKey,
+		"DKPG_USERNAME": cfg.DKPGUsername, "DKPG_PASSWORD": cfg.DKPGPassword,
+		"DKPG_CLIENT_ID": cfg.DKPGClientID, "DKPG_CLIENT_SECRET": cfg.DKPGClientSecret,
+		"DKPG_SOURCE_APP": cfg.DKPGSourceApp,
+	}); err != nil {
+		return nil, err
+	}
+	return dkpg.NewClient(cfg.DKPGBaseURL, cfg.DKPGAPIKey, cfg.DKPGSourceApp, cfg.DKPGUsername,
+		cfg.DKPGPassword, cfg.DKPGClientID, cfg.DKPGClientSecret, cfg.DKPGScopes,
+		cfg.DKPGPrivateKey, r.LogRepo), nil
 }
 
+// AgencyName is the agency this gateway presents to the card provider. Like
+// SourceApp on the bank side, it describes us rather than any one recipient.
+func (r *GatewayResolver) AgencyName() string {
+	if r == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.Cfg.StripeAgencyName)
+}
+
+// StripeClient builds a card client for one resolved recipient.
+//
+// The same division as DKPG above, for the same reason. The provider knows this
+// gateway as one agency under one key; what distinguishes a recipient is which
+// sub-merchant the money is booked to. So the key and the agency name come from
+// the environment, and the record carries submerchant_id and dk_account.
+//
+// Older records may still hold a copy of the key and agency name. They are
+// inert, and CreateCredential refuses new ones.
 func (r *GatewayResolver) StripeClient(resolved *ResolvedGateway) (*stripe.Client, error) {
-	if resolved == nil || resolved.Routing == nil || resolved.Routing.Credential.Provider != "stripe" || strings.TrimSpace(resolved.Values["api_key"]) == "" {
+	if resolved == nil || resolved.Routing == nil || resolved.Routing.Credential.Provider != "stripe" {
 		return nil, ErrMerchantNotConfigured
 	}
-	return stripe.NewClient(r.Cfg.StripeBaseURL, resolved.Values["api_key"], r.LogRepo), nil
+	// Which sub-merchant the money is booked to. Per recipient.
+	if strings.TrimSpace(resolved.Values["submerchant_id"]) == "" ||
+		strings.TrimSpace(resolved.Values["dk_account"]) == "" {
+		return nil, fmt.Errorf("Stripe credential configuration is incomplete: submerchant_id and dk_account are required")
+	}
+	if err := requireEnv(map[string]string{
+		"STRIPE_BASE_URL": r.Cfg.StripeBaseURL, "STRIPE_API_KEY": r.Cfg.StripeAPIKey,
+		"STRIPE_AGENCY_NAME": r.Cfg.StripeAgencyName,
+	}); err != nil {
+		return nil, err
+	}
+	return stripe.NewClient(r.Cfg.StripeBaseURL, r.Cfg.StripeAPIKey, r.LogRepo), nil
 }
 
 func (r *GatewayResolver) Value(resolved *ResolvedGateway, key string) string {

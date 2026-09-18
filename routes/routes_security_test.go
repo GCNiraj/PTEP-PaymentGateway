@@ -14,7 +14,7 @@ func TestRemovedDKPGDisclosureAndProxyRoutesReturnNotFound(t *testing.T) {
 	app := fiber.New()
 	next := func(c *fiber.Ctx) error { return c.Next() }
 	Register(app,
-		nil, nil, &controllers.AuthController{CSRFCookieName: "csrf_token"}, nil, nil, nil, nil, nil,
+		nil, nil, &controllers.AuthController{CSRFCookieName: "csrf_token"}, nil, nil, nil, nil, nil, nil, nil,
 		next, next, next, next,
 		nil, nil, nil,
 		next, next, next, next,

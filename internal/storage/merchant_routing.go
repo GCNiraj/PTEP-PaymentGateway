@@ -80,7 +80,11 @@ func (r *MerchantRoutingRepository) CreateRecipient(ctx context.Context, recipie
 	}
 	_, err := r.DB.ExecContext(ctx, `
 		INSERT INTO payment_recipients (id, name, is_active, created_by, updated_by)
-		VALUES (COALESCE(NULLIF($1, ''), gen_random_uuid()), $2, $3, $4, $4)
+		-- $1 is cast before the COALESCE: the column is uuid and the parameter
+		-- arrives as text, and Postgres refuses to match the two branches at
+		-- parse time — so without the cast this statement fails for every input,
+		-- not just an empty one.
+		VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $4)
 	`, strings.TrimSpace(recipient.ID), strings.TrimSpace(recipient.Name), recipient.IsActive, strings.TrimSpace(actor))
 	return err
 }

@@ -80,7 +80,12 @@ func SecurityHeaders(opts SecurityHeadersOptions) fiber.Handler {
 		c.Set("X-Frame-Options", "SAMEORIGIN")
 		c.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		if setCSP {
+		// A handler that set its own CSP keeps it. The site-wide policy is the
+		// right default for a page this service wrote; it is the wrong policy
+		// for a file somebody uploaded, which a handler serves under a far
+		// stricter one (`default-src 'none'; sandbox`). Overwriting that with
+		// the looser site policy would silently widen what such a file may do.
+		if setCSP && len(c.Response().Header.Peek("Content-Security-Policy")) == 0 {
 			if opts.CSPReportOnly {
 				c.Set("Content-Security-Policy-Report-Only", cspPolicy)
 			} else {

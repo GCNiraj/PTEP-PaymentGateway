@@ -11,7 +11,7 @@ import (
 // Why needed: centralizes endpoint mapping so request flow is predictable.
 // Called from: main() after middleware/controller construction.
 // Next flow: Fiber dispatches matching requests to mapped handlers.
-func Register(app *fiber.App, businessController *controllers.BusinessController, txListController *controllers.TransactionsListController, authController *controllers.AuthController, logsController *controllers.LogsController, appsController *controllers.AppsController, appsManagementController *controllers.AppsManagementController, internationalController *controllers.InternationalController, merchantRoutingAdminController *controllers.MerchantRoutingAdminController, dbLogger fiber.Handler, stdoutLogger fiber.Handler, adminAuth fiber.Handler, apiKeyAuth fiber.Handler, adminDebugController *controllers.AdminDebugController, seedController *controllers.SeedController, dbDebugController *controllers.DBDebugController, bizRateLimiter fiber.Handler, otpRateLimiter fiber.Handler, adminWriteRateLimiter fiber.Handler, appCreateRateLimiter fiber.Handler) {
+func Register(app *fiber.App, businessController *controllers.BusinessController, txListController *controllers.TransactionsListController, authController *controllers.AuthController, logsController *controllers.LogsController, appsController *controllers.AppsController, appsManagementController *controllers.AppsManagementController, internationalController *controllers.InternationalController, merchantRoutingAdminController *controllers.MerchantRoutingAdminController, upiController *controllers.UpiController, routingOverviewController *controllers.MerchantRoutingOverviewController, dbLogger fiber.Handler, stdoutLogger fiber.Handler, adminAuth fiber.Handler, apiKeyAuth fiber.Handler, adminDebugController *controllers.AdminDebugController, seedController *controllers.SeedController, dbDebugController *controllers.DBDebugController, bizRateLimiter fiber.Handler, otpRateLimiter fiber.Handler, adminWriteRateLimiter fiber.Handler, appCreateRateLimiter fiber.Handler) {
 	_ = adminDebugController
 	_ = seedController
 	_ = dbDebugController
@@ -35,6 +35,11 @@ func Register(app *fiber.App, businessController *controllers.BusinessController
 	adminRead.Get("/logs", logsController.List)
 	adminRead.Post("/logs/search", middleware.CSRFProtect(authController.CSRFCookieName, ""), logsController.ListByBody)
 	adminRead.Get("/international/transactions", internationalController.List)
+
+	// UPI. Read from the booking platform, not from this database — see
+	// controllers/upi_controller.go for why these rows are not held here.
+	adminRead.Get("/upi/payments", upiController.List)
+	adminRead.Get("/upi/payments/:reference/screenshot", upiController.Screenshot)
 	adminRead.Post("/international/transactions/search", middleware.CSRFProtect(authController.CSRFCookieName, ""), internationalController.ListByBody)
 
 	// App management endpoints (admin only) — rate limited per IP to prevent automated abuse
@@ -49,6 +54,12 @@ func Register(app *fiber.App, businessController *controllers.BusinessController
 	adminRead.Get("/recipients", merchantRoutingAdminController.ListRecipients)
 	adminRead.Get("/recipient-mappings", merchantRoutingAdminController.ListMappings)
 	adminRead.Get("/gateway-credentials", merchantRoutingAdminController.ListCredentials)
+
+	// Who gets paid, as one screen. The overview joins the booking platform's
+	// property list against what is routed here; provision does the four
+	// separate set-up calls in one, so a half-finished property is not possible.
+	adminRead.Get("/merchant-routing/overview", routingOverviewController.Overview)
+	adminWrite.Post("/merchant-routing/provision", routingOverviewController.Provision)
 	adminWrite.Post("/recipients", merchantRoutingAdminController.CreateRecipient)
 	adminWrite.Put("/recipients/:id", merchantRoutingAdminController.SetRecipientActive)
 	adminWrite.Post("/recipient-mappings", merchantRoutingAdminController.CreateMapping)

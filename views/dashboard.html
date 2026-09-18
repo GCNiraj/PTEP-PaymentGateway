@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dashboard — Xceed Studio PG UI</title>
+  <title>Dashboard — PTEP Payments</title>
 
   <!-- Bootstrap 5 CSS -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
@@ -18,7 +18,7 @@
   <nav id="sidebar" class="d-flex flex-column p-3 gap-1">
 
     <div class="sidebar-brand mb-3 mt-1 px-1">
-      <i class="bi bi-shield-check me-2 text-primary"></i>Xceed Studio
+      <i class="bi bi-shield-check me-2 text-primary"></i>PTEP Payments
       <small>Admin Portal</small>
     </div>
 
@@ -48,6 +48,11 @@
       <li class="nav-item">
         <a class="sidebar-link" data-tab="upi" href="#">
           <i class="bi bi-qr-code me-2"></i>UPI payments
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="sidebar-link" data-tab="routing" href="#">
+          <i class="bi bi-diagram-3 me-2"></i>Who gets paid
         </a>
       </li>
       <li class="nav-item">
@@ -271,26 +276,51 @@
 
     <!-- UPI payments.
 
-         Deliberately not a transaction table. UPI does not route through this
-         gateway and there is nothing here to list: the traveller transfers
-         directly to the property's own account, and the property confirms it.
-         A table of zeroes would read as an outage rather than as a design, and
-         a table of invented rows would be a lie. This says where UPI actually
-         lives, so nobody goes looking for it here. -->
+         These rows are a record, not a ledger. No UPI money moves through this
+         gateway — the guest pays the property's own account directly — so there
+         is nothing here to settle, refund or reconcile against a bank file.
+         What there is, is evidence: the reference the guest gave, the number to
+         ring them on, the screenshot they submitted, and whether the property
+         has answered it yet. Somebody chasing a UPI payment comes here first,
+         so the record is here, read live from the booking platform that owns it.
+
+         Read-only on purpose. The property decides; this shows the decision. -->
     <div id="tab-upi" class="tab-pane d-none">
 
       <div class="d-flex align-items-center justify-content-between mb-4">
         <h5 class="mb-0 page-header-title">UPI payments</h5>
-        <span class="badge bg-secondary-subtle text-secondary-emphasis">Not routed through this gateway</span>
+        <div class="d-flex gap-2 align-items-center">
+          <span class="badge bg-secondary-subtle text-secondary-emphasis">Record only &mdash; settles outside this gateway</span>
+          <button id="refresh-upi-btn" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+          </button>
+        </div>
       </div>
 
-      <div class="alert alert-info d-flex gap-3" role="status">
+      <div id="upi-notice" class="alert alert-info d-flex gap-3 d-none" role="status">
         <i class="bi bi-info-circle fs-5"></i>
-        <div>
-          <strong>UPI settles directly between the guest and the property.</strong>
-          No UPI payment reaches this gateway, so none is listed here. This
-          gateway carries bank pull payments only &mdash; those are under
-          <a href="#" class="alert-link" data-tab-jump="transactions">Transactions</a>.
+        <div id="upi-notice-text"></div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 small">
+            <thead class="table-light">
+              <tr>
+                <th>Booking</th>
+                <th>UPI reference</th>
+                <th>Payer contact</th>
+                <th>Property</th>
+                <th class="text-end">Amount</th>
+                <th>Verification</th>
+                <th>Submitted</th>
+                <th>Screenshot</th>
+              </tr>
+            </thead>
+            <tbody id="upi-table-body">
+              <tr><td colspan="8" class="text-center text-muted py-4">Loading&hellip;</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -316,23 +346,118 @@
         <div class="col-md-6">
           <div class="card h-100">
             <div class="card-body">
-              <h6 class="card-title"><i class="bi bi-shield-check me-2"></i>Why it is not here</h6>
+              <h6 class="card-title"><i class="bi bi-shield-check me-2"></i>Why it settles elsewhere</h6>
               <p class="small text-muted mb-2">
-                Payment settles directly to each operator and the platform is
-                never the merchant of record, so there is no merchant account for
-                this gateway to pull against and no callback to reconcile.
+                Payment goes directly to each operator and the platform is never
+                the merchant of record, so there is no merchant account for this
+                gateway to pull against and no callback to reconcile.
               </p>
               <p class="small text-muted mb-0">
                 Routing UPI through this gateway would need a collect/intent API
                 with a provisioned merchant per property and a settlement
-                callback. Until that exists, manual verification is the only
-                honest way to confirm one, and it lives in the operator portal.
+                callback. Until that exists the property verifies each payment by
+                hand, and the table above is the record of those decisions.
               </p>
             </div>
           </div>
         </div>
       </div>
     </div><!-- /tab-upi -->
+
+    <!-- Who gets paid.
+
+         Every part of this already had an endpoint and no screen, so it was
+         done with curl, four calls per property, by hand. Seven of eight
+         properties went unconfigured and nothing said so, because nothing here
+         knew there were eight.
+
+         The property list comes from the booking platform; what is routed comes
+         from this database. The gap between them is the only thing worth
+         looking at, so the gap is what this leads with. -->
+    <div id="tab-routing" class="tab-pane d-none">
+
+      <div class="d-flex align-items-center justify-content-between mb-4">
+        <h5 class="mb-0 page-header-title">Who gets paid</h5>
+        <div class="d-flex gap-2 align-items-center">
+          <select id="routing-app-scope" class="form-select form-select-sm" style="width:auto"
+                  title="Routing is per app: each integration has its own recipients"></select>
+          <select id="routing-provider" class="form-select form-select-sm" style="width:auto">
+            <option value="dkpg">Bank transfer (DKPG)</option>
+            <option value="stripe">Cards (Stripe)</option>
+          </select>
+          <button id="refresh-routing-btn" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+          </button>
+        </div>
+      </div>
+
+      <div id="routing-notice" class="alert d-flex gap-3 d-none" role="status">
+        <i class="bi bi-info-circle fs-5"></i>
+        <div id="routing-notice-text"></div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 small">
+            <thead class="table-light">
+              <tr>
+                <th>Property</th>
+                <th>merchant_reference</th>
+                <th>Pays into</th>
+                <th>Bank</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="routing-table-body">
+              <tr><td colspan="6" class="text-center text-muted py-4">Loading&hellip;</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card d-none" id="routing-form-card">
+        <div class="card-body">
+          <h6 class="card-title mb-1"><i class="bi bi-bank me-2"></i>Set up <span id="routing-form-property">a property</span></h6>
+          <p class="small text-muted">
+            The account this property&rsquo;s money is paid into. Authentication is
+            this gateway&rsquo;s own and comes from its environment &mdash; it is
+            the same for every property and is not asked for here.
+          </p>
+          <form id="routing-form" class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small" for="routing-name">Recipient name</label>
+              <input id="routing-name" class="form-control form-control-sm" required>
+            </div>
+            <div class="col-md-6" data-provider="dkpg">
+              <label class="form-label small" for="routing-account">beneficiary_account</label>
+              <input id="routing-account" class="form-control form-control-sm" inputmode="numeric">
+              <div class="form-text small" id="routing-account-hint"></div>
+            </div>
+            <div class="col-md-3" data-provider="dkpg">
+              <label class="form-label small" for="routing-bank">beneficiary_bank</label>
+              <input id="routing-bank" class="form-control form-control-sm" inputmode="numeric">
+            </div>
+            <div class="col-md-6 d-none" data-provider="stripe">
+              <label class="form-label small" for="routing-submerchant">submerchant_id</label>
+              <input id="routing-submerchant" class="form-control form-control-sm">
+            </div>
+            <div class="col-md-6 d-none" data-provider="stripe">
+              <label class="form-label small" for="routing-dkaccount">dk_account</label>
+              <input id="routing-dkaccount" class="form-control form-control-sm">
+            </div>
+            <div class="col-12 d-flex gap-2">
+              <button type="submit" class="btn btn-primary btn-sm">Create and activate</button>
+              <button type="button" id="routing-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+            </div>
+            <div class="col-12">
+              <div class="small text-muted" id="routing-form-scope"></div>
+              <div id="routing-form-error" class="small text-danger"></div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div><!-- /tab-routing -->
 
     <!-- ┌─ 4. International Tab ─────────────────────────────── -->
     <div id="tab-international" class="tab-pane d-none">

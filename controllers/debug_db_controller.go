@@ -38,7 +38,7 @@ func (ctl *DBDebugController) Status(c *fiber.Ctx) error {
 	}
 
 	return c.Status(http.StatusOK).JSON(fiber.Map{
-		"db_connected": true,
+		"db_connected":               true,
 		"payment_transactions_count": count,
 	})
 }

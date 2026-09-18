@@ -153,11 +153,7 @@ func (ctrl *InternationalController) CreatePayment(c *fiber.Ctx) error {
 	}
 	resolved, err := ctrl.Resolver.Resolve(merchantIDStr, req.MerchantReference, "stripe")
 	if err != nil {
-		return merchantConfigurationError(c)
-	}
-	stripeClient, err := ctrl.Resolver.StripeClient(resolved)
-	if err != nil {
-		return merchantConfigurationError(c)
+		return merchantConfigurationErrorFor(c, err)
 	}
 	allowedCurrency := ctrl.resolvedStripeCurrency()
 	const allowedCurrencyUpper = "USD"
@@ -224,7 +220,7 @@ func (ctrl *InternationalController) CreatePayment(c *fiber.Ctx) error {
 		})
 	}
 
-	agencyName := ctrl.Resolver.Value(resolved, "agency_name")
+	agencyName := ctrl.Resolver.AgencyName()
 	submerchantID := ctrl.Resolver.Value(resolved, "submerchant_id")
 	dkAccount := ctrl.Resolver.Value(resolved, "dk_account")
 	successURL := req.SuccessURL
@@ -276,6 +272,14 @@ func (ctrl *InternationalController) CreatePayment(c *fiber.Ctx) error {
 		"dk_account":     dkAccount,
 		"success_url":    successURL,
 		"cancel_url":     cancelURL,
+	}
+
+	// Built here rather than above, so that a malformed request is answered as a
+	// malformed request even when this gateway has no card credentials. What is
+	// wrong with the caller's payload does not depend on our configuration.
+	stripeClient, err := ctrl.Resolver.StripeClient(resolved)
+	if err != nil {
+		return merchantConfigurationErrorFor(c, err)
 	}
 
 	stripeResp, err := stripeClient.CreateCheckoutSession(c.Context(), stripePayload)

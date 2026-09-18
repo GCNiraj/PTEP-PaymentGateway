@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
@@ -224,9 +225,26 @@ func APIKeyAuthWithOptions(appsRepo *storage.AppsRepository, opts APIKeyAuthOpti
 		c.Locals("app_id", matchedApp.ID)
 		c.Locals("app_name", matchedApp.Name)
 
-		// Update last used timestamp (async, don't wait)
+		// Update last used timestamp (async, don't wait).
+		//
+		// The context here is deliberately NOT c.Context(). fasthttp pools and
+		// reuses a RequestCtx the moment the handler returns, so touching it
+		// from a goroutine that outlives the response is a use-after-free — it
+		// panics on a nil connection and takes the whole process down, on the
+		// endpoint that moves money.
+		//
+		// It stayed hidden while every request here made a slow upstream call:
+		// the write finished long before the handler did. It surfaced the day a
+		// request could be refused immediately, which is exactly the kind of
+		// change that is supposed to be safe.
+		//
+		// The app ID is copied by value, and the write gets its own bounded
+		// context: this is a bookkeeping timestamp, not part of the request.
+		appID := matchedApp.ID
 		go func() {
-			_ = appsRepo.UpdateLastUsed(c.Context(), matchedApp.ID)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = appsRepo.UpdateLastUsed(ctx, appID)
 		}()
 
 		return c.Next()
@@ -272,8 +290,12 @@ func OptionalAPIKeyAuthWithOptions(appsRepo *storage.AppsRepository, opts APIKey
 			c.Locals("app_name", matchedApp.Name)
 
 			// Update last used timestamp (async)
+			// Detached from the request context, for the reason above.
+			appID := matchedApp.ID
 			go func() {
-				_ = appsRepo.UpdateLastUsed(c.Context(), matchedApp.ID)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = appsRepo.UpdateLastUsed(ctx, appID)
 			}()
 		}
 

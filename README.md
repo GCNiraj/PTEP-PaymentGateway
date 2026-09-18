@@ -243,9 +243,20 @@ CSRF-protected `/api/admin` endpoints:
 - `POST /api/admin/gateway-credentials/:id/rotate`
 
 Gateway configuration bodies are encrypted with AES-256-GCM before storage and
-are never returned by the administration API. The configured provider-specific
-payload is a string map. Current `dkpg` configurations require `api_key`,
-`username`, `password`, `client_id`, `client_secret`, `source_app`,
-`beneficiary_account`, `beneficiary_name`, and `beneficiary_bank`. Current
-`stripe` configurations require `api_key`, `agency_name`, `submerchant_id`, and
-`dk_account`.
+are never returned by the administration API.
+
+A configuration says where one recipient's money is booked, and nothing else.
+Each provider knows this service as a single integrator under a single identity,
+so authentication is held in the environment and is identical on every payment:
+`DKPG_*` for the bank, `STRIPE_BASE_URL` / `STRIPE_API_KEY` /
+`STRIPE_AGENCY_NAME` for cards.
+
+- `dkpg` requires `beneficiary_account`, `beneficiary_name` and
+  `beneficiary_bank`. The last reads as optional on `pull/initiate`, where it
+  only backs up the remitter's bank code — but `intra/inquiry` sends it as
+  `bene_bank_code`, the beneficiary's own bank, with nothing behind it.
+- `stripe` requires `submerchant_id` and `dk_account`.
+
+A configuration that also carries authentication is **rejected**, not ignored,
+and the error names the offending key: a record that appears to hold its own
+credentials while not using them is worse than one that never claimed to.

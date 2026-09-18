@@ -30,7 +30,7 @@ func (ctl *AdminDebugController) Status(c *fiber.Ctx) error {
 	_ = ctl.DB.Model(&gormdb.AdminUser{}).Count(&count).Error
 
 	return c.JSON(fiber.Map{
-		"db": "ok",
+		"db":          "ok",
 		"admin_users": count,
 	})
 }

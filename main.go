@@ -182,6 +182,9 @@ func main() {
 	intlRepo := storage.NewInternationalRepository(db)
 	internationalController := controllers.NewInternationalController(stripeClient, intlRepo, appsRepo, cfg, resolver)
 	merchantRoutingAdminController := controllers.NewMerchantRoutingAdminController(routingRepo, credentialCipher)
+	// UPI records live in the booking platform; this reads them over its API.
+	upiController := controllers.NewUpiController(cfg)
+	routingOverviewController := controllers.NewMerchantRoutingOverviewController(routingRepo, credentialCipher, cfg)
 	statusSyncCtx, cancelStatusSync := context.WithCancel(context.Background())
 	defer cancelStatusSync()
 	internationalController.StartPendingStatusSync(statusSyncCtx)
@@ -228,7 +231,7 @@ func main() {
 		log.Printf("ADMIN_SIGNUP_KEY is empty; backend signup endpoint is disabled")
 	}
 
-	routes.Register(app, businessController, txListController, authController, logsController, appsController, appsManagementController, internationalController, merchantRoutingAdminController, dbRequestLogger, stdoutRequestLogger, adminAuth, apiKeyAuth, adminDebugController, seedController, dbDebugController, bizRateLimit, otpRateLimit, adminWriteRateLimit, appCreateRateLimit)
+	routes.Register(app, businessController, txListController, authController, logsController, appsController, appsManagementController, internationalController, merchantRoutingAdminController, upiController, routingOverviewController, dbRequestLogger, stdoutRequestLogger, adminAuth, apiKeyAuth, adminDebugController, seedController, dbDebugController, bizRateLimit, otpRateLimit, adminWriteRateLimit, appCreateRateLimit)
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.Redirect("/login", http.StatusFound)
 	})

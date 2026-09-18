@@ -3,6 +3,7 @@ package controllers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -38,10 +39,13 @@ func NewBusinessController(repo *storage.Repository, cfg config.Config, resolver
 // - remitter_account_number, remitter_account_name
 // - customer_phone/phone_number/remitter_phone, email_id
 // - remitter_bank_code (preferred), remitter_bank_id (legacy alias)
-// Server-owned fields:
-// - account_number is always set from DK_BENEFICIARY_ACCOUNT (client value ignored)
-// - account_name is always set from DK_BENEFICIARY_NAME (client value ignored)
-// - remitter_bank_id falls back to DK_BENEFICIARY_BANK when client value is missing
+// - merchant_reference (required) — which recipient is being paid
+// Server-owned fields, taken from that recipient's stored configuration and
+// never from the request:
+// - account_number from beneficiary_account (client value ignored)
+// - account_name from beneficiary_name (client value ignored)
+// - remitter_bank_id falls back to beneficiary_bank when the client omits it
+// - source_app from this gateway's own environment, not the recipient
 // Response:
 // - 400 invalid JSON
 // - 409 duplicate external reference
@@ -73,7 +77,7 @@ func (ctl *BusinessController) PullPaymentInitiate(c *fiber.Ctx) error {
 	appID := middleware.GetAppID(c)
 	resolved, client, err := ctl.resolveDKPGForMerchant(appID, req.MerchantReference)
 	if err != nil {
-		return merchantConfigurationError(c)
+		return merchantConfigurationErrorFor(c, err)
 	}
 	if exists, err := ctl.Repo.OrderIDExistsForApp(common.CtxFromFiber(c), appID, req.Reference); err != nil {
 		return sendSanitizedInternalError(c)
@@ -104,7 +108,7 @@ func (ctl *BusinessController) PullPaymentInitiate(c *fiber.Ctx) error {
 	}
 
 	requestID := common.NewRequestID()
-	stan := firstNonEmpty(readString(raw, "stan_number"), common.GenerateSTAN(ctl.Resolver.Value(resolved, "source_app")))
+	stan := firstNonEmpty(readString(raw, "stan_number"), common.GenerateSTAN(ctl.Resolver.SourceApp()))
 	txnTime := time.Now().UTC()
 	if dt := readString(raw, "transaction_datetime"); dt != "" {
 		if parsed, err := time.Parse(time.RFC3339, dt); err == nil {
@@ -118,7 +122,7 @@ func (ctl *BusinessController) PullPaymentInitiate(c *fiber.Ctx) error {
 	payload["account_number"] = beneficiaryAccountCfg
 	payload["account_name"] = beneficiaryNameCfg
 	payload["remitter_bank_id"] = remitterBankID
-	payload["source_app"] = ctl.Resolver.Value(resolved, "source_app")
+	payload["source_app"] = ctl.Resolver.SourceApp()
 	delete(payload, "remitter_bank_code")
 	if _, ok := payload["transaction_amount"]; !ok && req.Amount > 0 {
 		payload["transaction_amount"] = req.Amount
@@ -236,7 +240,7 @@ func (ctl *BusinessController) PullPaymentConfirm(c *fiber.Ctx) error {
 	}
 	client, err := ctl.resolveDKPGForRecordedCredential(routing.GatewayCredentialConfigurationID)
 	if err != nil {
-		return merchantConfigurationError(c)
+		return merchantConfigurationErrorFor(c, err)
 	}
 	bfsTxnID := routing.BFSTxnID
 
@@ -317,7 +321,7 @@ func (ctl *BusinessController) IntraInquiry(c *fiber.Ctx) error {
 	}
 	resolved, client, err := ctl.resolveDKPGForMerchant(middleware.GetAppID(c), req.MerchantReference)
 	if err != nil {
-		return merchantConfigurationError(c)
+		return merchantConfigurationErrorFor(c, err)
 	}
 
 	// Prevent duplicate external_reference usage across inquiry and transfer records.
@@ -471,7 +475,7 @@ func (ctl *BusinessController) StatusSameDay(c *fiber.Ctx) error {
 	}
 	client, err := ctl.Resolver.DKPGClient(resolved)
 	if err != nil {
-		return merchantConfigurationError(c)
+		return merchantConfigurationErrorFor(c, err)
 	}
 	beneAccountNumber := ctl.Resolver.Value(resolved, "beneficiary_account")
 	if beneAccountNumber == "" {
@@ -554,7 +558,7 @@ func (ctl *BusinessController) StatusLater(c *fiber.Ctx) error {
 	}
 	client, err := ctl.Resolver.DKPGClient(resolved)
 	if err != nil {
-		return merchantConfigurationError(c)
+		return merchantConfigurationErrorFor(c, err)
 	}
 	beneAccountNumber := ctl.Resolver.Value(resolved, "beneficiary_account")
 	if beneAccountNumber == "" {
@@ -639,7 +643,7 @@ func (ctl *BusinessController) StatusIntra(c *fiber.Ctx) error {
 	}
 	client, err := ctl.Resolver.DKPGClient(resolved)
 	if err != nil {
-		return merchantConfigurationError(c)
+		return merchantConfigurationErrorFor(c, err)
 	}
 	beneAccountNumber := ctl.Resolver.Value(resolved, "beneficiary_account")
 	if beneAccountNumber == "" {
@@ -916,6 +920,27 @@ func (ctl *BusinessController) resolveDKPGForRecordedCredential(credentialID str
 }
 
 func merchantConfigurationError(c *fiber.Ctx) error {
+	return merchantConfigurationErrorFor(c, ErrMerchantNotConfigured)
+}
+
+// merchantConfigurationErrorFor answers the caller according to whose problem
+// it is.
+//
+// A caller who named a merchant nobody has set up can fix that themselves, and
+// is told so. A gateway missing its own provider credentials — bank or card —
+// is our failure, cannot be fixed from outside, and must not be described as a
+// bad merchant_reference: that reading cost an afternoon once already. It
+// returns 503 with nothing specific, because the detail belongs in our logs,
+// not in their response.
+func merchantConfigurationErrorFor(c *fiber.Ctx, err error) error {
+	if errors.Is(err, ErrGatewayNotConfigured) {
+		log.Printf("payment refused: %v", err)
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+			"success": false,
+			"code":    "GATEWAY_NOT_CONFIGURED",
+			"message": "this gateway is not configured to reach the payment provider; no payment was attempted",
+		})
+	}
 	return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 		"success": false,
 		"code":    "MERCHANT_NOT_CONFIGURED",
