@@ -570,6 +570,110 @@ async function loadUpiPayments() {
     const res  = await adminFetch('/api/admin/upi/payments?limit=200');
     const data = await res.json();
 
+    if (!res.ok || data.connected === false) {
+      const detail = esc(data.message || data.error || 'the booking platform could not be reached');
+      upiNotice(`<strong>UPI records are unavailable.</strong> ${detail}`, 'warning');
+      tbody.innerHTML = emptyRow(8, 'Records could not be loaded — this is not the same as there being none.');
+      return;
+    }
+
+    const rows = data.payments || [];
+    const awaiting = rows.filter(r => r.decision === 'awaiting').length;
+    upiNotice(
+      '<strong>UPI settles directly between the guest and the property.</strong> ' +
+      'These are the payment records held by the booking platform, shown here for reference. ' +
+      (awaiting ? `<strong>${awaiting}</strong> awaiting the property&rsquo;s verification.` : 'None are awaiting verification.'));
+
+    if (!rows.length) { tbody.innerHTML = emptyRow(8, 'No UPI payments submitted yet.'); return; }
+
+    tbody.innerHTML = '';
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      const screenshot = row.screenshotUrl
+        ? `<a href="${esc(row.screenshotUrl)}" target="_blank" rel="noopener noreferrer" class="small">
+             <i class="bi bi-image me-1"></i>View</a>`
+        : '<span class="text-muted">—</span>';
+      const reason = row.decisionReason
+        ? `<div class="text-muted small mt-1">${esc(row.decisionReason)}</div>` : '';
+      tr.innerHTML = `
+        <td class="font-monospace small">${esc(row.bookingReference)}</td>
+        <td class="font-monospace small">${esc(row.transactionReference)}</td>
+        <td class="font-monospace small">${esc(row.payerContact || '—')}</td>
+        <td>${esc(row.property)}</td>
+        <td class="text-end">${esc(row.amount)} <span class="text-muted">${esc(row.currency)}</span></td>
+        <td>${upiDecisionBadge(row.decision)}${reason}</td>
+        <td class="small text-muted">${upiWhen(row.submittedAt)}</td>
+        <td>${screenshot}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    upiNotice('<strong>UPI records are unavailable.</strong> The booking platform could not be reached.', 'warning');
+    tbody.innerHTML = emptyRow(8, 'Records could not be loaded — this is not the same as there being none.');
+  }
+}
+
+// ── Who gets paid ─────────────────────────────────────────────
+
+let _routingApps = [];
+
+// Which integration this screen is answering for. Routing is keyed on
+// (app, merchant_reference), so "who gets paid" is meaningless until one app is
+// named — two integrations may legitimately pay the same payee into different
+// accounts.
+function routingAppId() {
+  return document.getElementById('routing-app-scope')?.value || '';
+}
+
+function routingProvider() {
+  return document.getElementById('routing-provider')?.value || 'dkpg';
+}
+
+function routingNotice(message, kind = 'info') {
+  const box = document.getElementById('routing-notice');
+  const text = document.getElementById('routing-notice-text');
+  if (!box || !text) return;
+  if (!message) { box.classList.add('d-none'); return; }
+  box.className = `alert alert-${kind} d-flex gap-3`;
+  text.innerHTML = message;
+}
+
+//
+// The rows are this gateway's own recipients and mappings, so the screen works
+// — and a payee can still be added — when the booking platform is unreachable.
+// The platform, when it answers, only adds the property name behind a reference
+// and flags properties nothing here pays yet.
+
+async function loadRouting() {
+  const tbody = document.getElementById('routing-table-body');
+  if (!tbody) return;
+  const provider = routingProvider();
+  tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+
+  const scope = document.getElementById('routing-app-scope');
+  try {
+    const appsRes = await adminFetch('/api/admin/apps');
+    const appsData = await appsRes.json();
+    _routingApps = (appsData.data || appsData.apps || []).filter(a => a.is_active !== false);
+  } catch (e) { _routingApps = []; }
+
+  if (scope && scope.options.length !== _routingApps.length) {
+    const previous = scope.value;
+    scope.innerHTML = _routingApps.map(a =>
+      `<option value="${esc(a.id || a.app_id)}">${esc(a.name)}</option>`).join('');
+    if (previous && _routingApps.some(a => (a.id || a.app_id) === previous)) scope.value = previous;
+  }
+  if (!_routingApps.length) {
+    routingNotice('<strong>No active apps.</strong> Routing is per app, so an integration has to exist before a property can be paid through it. Create one under <a href="#" class="alert-link" data-tab-jump="apps">Apps</a>.', 'warning');
+    tbody.innerHTML = emptyRow(6, 'No app to route for.');
+    return;
+  }
+
+  try {
+    const res = await adminFetch(
+      `/api/admin/merchant-routing/overview?provider=${encodeURIComponent(provider)}&app_id=${encodeURIComponent(routingAppId())}`);
+    const data = await res.json();
+
     if (!res.ok && !Array.isArray(data.rows)) {
       routingNotice(`<strong>Could not load routing.</strong> ${esc(data.error || res.status)}`, 'danger');
       tbody.innerHTML = emptyRow(6, 'The gateway did not answer.');
@@ -579,15 +683,13 @@ async function loadUpiPayments() {
     const rows = data.rows || [];
     const ready = rows.filter(r => r.configured).length;
 
-    // The platform not answering is worth saying, but it no longer empties the
-    // screen: these rows are this gateway's own routing and do not depend on it.
     if (data.platformError) {
       routingNotice(
-        `<strong>The booking platform is not answering,</strong> so this list cannot show ` +
-        `which properties exist there or which are still missing. ` +
-        `What you see below is this gateway's own routing, which is unaffected.` +
+        '<strong>The booking platform is not answering,</strong> so this list cannot show ' +
+        'which properties exist there or which are still missing. ' +
+        "What you see below is this gateway's own routing, which is unaffected." +
         `<div class="small mt-1">${esc(data.platformError)}` +
-        (data.platform ? ` — tried <code>${esc(data.platform)}</code>` : '') + `</div>`, 'warning');
+        (data.platform ? ` — tried <code>${esc(data.platform)}</code>` : '') + '</div>', 'warning');
     } else if (!rows.length) {
       routingNotice('<strong>Nobody is set up to be paid yet.</strong> Add a payee to begin.', 'info');
     } else if (ready === rows.length) {
@@ -600,7 +702,7 @@ async function loadUpiPayments() {
     }
 
     if (!rows.length) {
-      tbody.innerHTML = emptyRow(6, 'No payees yet. Use “Add payee”.');
+      tbody.innerHTML = emptyRow(6, 'No payees yet. Use the Add payee button.');
       return;
     }
 
@@ -610,18 +712,15 @@ async function loadUpiPayments() {
     tbody.innerHTML = '';
     for (const row of rows) {
       const missing = row.missing || [];
-      let status, action = '';
-      if (row.configured) {
-        status = '<span class="badge bg-success">Ready</span>';
-      } else {
-        status = '<span class="badge bg-warning text-dark">Not set up</span>';
-      }
+      let status = row.configured
+        ? '<span class="badge bg-success">Ready</span>'
+        : '<span class="badge bg-warning text-dark">Not set up</span>';
       if (missing.length) {
         status += `<div class="text-muted small mt-1">${esc(missing.join('; '))}</div>`;
       }
-      if (!row.configured && row.merchantReference) {
-        action = `<button class="btn btn-outline-primary btn-sm" data-routing-setup="${esc(row.merchantReference)}" data-routing-name="${esc(row.property || row.recipient || '')}">Set up</button>`;
-      }
+      const action = (!row.configured && row.merchantReference)
+        ? `<button class="btn btn-outline-primary btn-sm" data-routing-setup="${esc(row.merchantReference)}" data-routing-name="${esc(row.property || row.recipient || '')}">Set up</button>`
+        : '';
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td>${esc(row.property || row.recipient || '—')}</td>
@@ -641,8 +740,8 @@ async function loadUpiPayments() {
         rows.find(r => r.merchantReference === button.getAttribute('data-routing-setup'))));
     });
   } catch (e) {
-    routingNotice('<strong>Properties cannot be listed.</strong> The booking platform could not be reached.', 'warning');
-    tbody.innerHTML = emptyRow(6, 'The property list comes from the booking platform, which did not answer.');
+    routingNotice(`<strong>Could not load routing.</strong> ${esc(e && e.message ? e.message : e)}`, 'danger');
+    tbody.innerHTML = emptyRow(6, 'The gateway did not answer.');
   }
 }
 
