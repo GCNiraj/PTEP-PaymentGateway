@@ -42,6 +42,40 @@
               }
             }
           ]
+        },
+        {
+          "name": "Hello",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/hello",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "hello"
+              ]
+            },
+            "description": "A liveness probe that touches nothing. Unauthenticated by design \u2014 useful as a load balancer health check that does not exercise the database."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -49,6 +83,49 @@
       "name": "2 \u00b7 Admin \u2014 session",
       "description": "Sign in first. The session cookie and CSRF token are captured automatically and every admin folder below depends on them. Sign out is deliberately the last folder in the collection, not here \u2014 running it early ends the session for everything after it.",
       "item": [
+        {
+          "name": "Login options",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/login/options",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "login",
+                "options"
+              ]
+            },
+            "description": "What the login page is told before anyone types anything. Public on purpose: the site key is public, and the page needs it to render the widget.\n\nTHE FIRST THING TO CHECK when the captcha does not appear. captcha_enabled is true only when LOGIN_CAPTCHA_SITE_KEY and LOGIN_CAPTCHA_SECRET are BOTH set \u2014 a site key alone turns the challenge off silently.\n\ncaptcha_after_failures is 0 by default, meaning every sign-in is challenged including the first. The response is Cache-Control: no-store, because a browser holding a stale copy renders the page the site used to be."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('never cached', () => pm.expect(pm.response.headers.get('Cache-Control')).to.eql('no-store'));",
+                  "pm.test('reports whether a challenge is configured', () => pm.expect(body.captcha_enabled).to.be.a('boolean'));",
+                  "if (body.captcha_enabled) {",
+                  "  pm.test('a site key comes with it', () => pm.expect(body.captcha_site_key).to.be.a('string').and.not.empty);",
+                  "  pm.test('threshold is a number', () => pm.expect(body.captcha_after_failures).to.be.a('number'));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "Sign in",
           "request": {
@@ -387,6 +464,104 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update app",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/apps/{{app_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{app_id}}"
+              ]
+            },
+            "description": "Rename an integration or change its contact. The API key is untouched \u2014 rotating that is a separate, deliberate act.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"PTEP Booking Service\",\n  \"contact_name\": \"PTEP Operations\",\n  \"contact_email\": \"ops@example.bt\",\n  \"contact_phone\": \"+97517000000\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete app",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/apps/{{app_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{app_id}}"
+              ]
+            },
+            "description": "Removes an integration. SKIPPED BY DEFAULT \u2014 it deletes the app the rest of this collection authenticates as, and an app referenced by transactions cannot be deleted at all: the foreign key refuses, because a payment must always be able to say who made it.\n\nSet allow_destructive to true to run it, and expect 409 rather than 200 on any app that has taken a payment."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Destructive. Skipped unless the environment says otherwise, because a",
+                  "// plain top-to-bottom run would otherwise break what follows it.",
+                  "if (String(pm.environment.get('allow_destructive')).toLowerCase() !== 'true') {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('deleted, or refused because payments reference it',",
+                  "  () => pm.expect([200, 204, 409]).to.include(pm.response.code));"
                 ]
               }
             }
@@ -863,6 +1038,238 @@
               }
             }
           ]
+        },
+        {
+          "name": "Provision a property (one call)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/merchant-routing/provision",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "merchant-routing",
+                "provision"
+              ]
+            },
+            "description": "Creates the recipient, stores its destination, activates it and maps the merchant reference \u2014 the four calls above, in order, as one.\n\nUsed by the dashboard's 'Set up' button and by scripts/provision.py. If any step fails the recipient is deactivated rather than left half-built, so a failure cannot leave a payee that exists but cannot be paid.\n\n409 if that reference is already mapped for this app.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"external_app_id\": \"{{app_id}}\",\n  \"merchant_reference\": \"merchant-postman-check\",\n  \"name\": \"Postman Check Property\",\n  \"provider\": \"dkpg\",\n  \"credentials\": {\n    \"beneficiary_account\": \"110158212197\",\n    \"beneficiary_name\": \"Postman Check Property\",\n    \"beneficiary_bank\": \"1060\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('created, or already mapped', () => pm.expect([201, 409]).to.include(pm.response.code));",
+                  "if (pm.response.code === 201) {",
+                  "  const d = pm.response.json().data || {};",
+                  "  pm.test('returns both ids', () => {",
+                  "    pm.expect(d.recipient_id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(d.credential_id).to.be.a('string').and.not.empty;",
+                  "  });",
+                  "}",
+                  "// Folders 6 and 7 pay this property, so the reference it was mapped",
+                  "// under becomes the one they use. Without this the business calls",
+                  "// depend on a mapping somebody made by hand months ago.",
+                  "pm.collectionVariables.set('merchant_reference', 'merchant-postman-check');",
+                  "if (pm.response.code === 201) {",
+                  "  const d = pm.response.json().data || {};",
+                  "  pm.collectionVariables.set('recipient_id', d.recipient_id);",
+                  "  pm.collectionVariables.set('credential_id', d.credential_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rotate credential",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/gateway-credentials/{{credential_id}}/rotate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "gateway-credentials",
+                "{{credential_id}}",
+                "rotate"
+              ]
+            },
+            "description": "Replaces a destination with a new version, keeping the old one for history. Payments already taken still name the exact credential and version that paid them.\n\nSKIPPED BY DEFAULT: the new version supersedes the one the rest of this run depends on.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credentials\": {\n    \"beneficiary_account\": \"110158212197\",\n    \"beneficiary_name\": \"Rotated Name\",\n    \"beneficiary_bank\": \"1060\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Destructive. Skipped unless the environment says otherwise, because a",
+                  "// plain top-to-bottom run would otherwise break what follows it.",
+                  "if (String(pm.environment.get('allow_destructive')).toLowerCase() !== 'true') {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('rotated', () => pm.expect([200, 201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deactivate a recipient",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/recipients/{{recipient_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "recipients",
+                "{{recipient_id}}"
+              ]
+            },
+            "description": "Stops a recipient being paid without deleting it. Deletion is refused anyway while payments reference it \u2014 an audit trail is worth more than a tidy table.\n\nSKIPPED BY DEFAULT.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_active\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Destructive. Skipped unless the environment says otherwise, because a",
+                  "// plain top-to-bottom run would otherwise break what follows it.",
+                  "if (String(pm.environment.get('allow_destructive')).toLowerCase() !== 'true') {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deactivate a mapping",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/recipient-mappings/{{mapping_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "recipient-mappings",
+                "{{mapping_id}}"
+              ]
+            },
+            "description": "Unroutes a merchant reference. Payments naming it are then refused with MERCHANT_NOT_CONFIGURED \u2014 refused, never misrouted.\n\nSKIPPED BY DEFAULT.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_active\": false\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Destructive. Skipped unless the environment says otherwise, because a",
+                  "// plain top-to-bottom run would otherwise break what follows it.",
+                  "if (String(pm.environment.get('allow_destructive')).toLowerCase() !== 'true') {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1272,6 +1679,96 @@
               }
             }
           ]
+        },
+        {
+          "name": "Transaction detail (by body)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/transactions/detail",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "transactions",
+                "detail"
+              ]
+            },
+            "description": "The same record as GET /transactions/:id, with the id in the body instead of the URL. Preferred: an id in a path lands in access logs, proxy logs and browser history, and these ids identify payments.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": 1\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.eql(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search international transactions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/international/transactions/search",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "international",
+                "transactions",
+                "search"
+              ]
+            },
+            "description": "Filtered card payments. POST rather than GET for the same reason as above \u2014 a search term can carry a reference or an email.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"limit\": 50\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('returns a list', () => pm.expect(pm.response.json().data).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1523,6 +2020,95 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 200, 400, 409, 502 or 503', () => pm.expect([200,400,409,502,503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Intra transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/intra/transfer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "intra",
+                "transfer"
+              ]
+            },
+            "description": "Moves money between accounts at the same bank, after intra/inquiry has confirmed the beneficiary. Needs DKPG credentials in the environment; answers 503 GATEWAY_NOT_CONFIGURED without them.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_reference\": \"{{merchant_reference}}\",\n  \"external_reference\": \"INTRA-{{$timestamp}}\",\n  \"transaction_amount\": 100,\n  \"remitter_account_number\": \"770182571\",\n  \"remitter_account_name\": \"Karma Dorji\",\n  \"purpose\": \"Postman intra transfer check\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('completed, refused, or the bank is not configured',",
+                  "  () => pm.expect([200, 400, 502, 503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Intra status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/business/status/intra",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "status",
+                "intra"
+              ]
+            },
+            "description": "Where an intra-bank transfer got to. Safe to call repeatedly.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_reference\": \"{{merchant_reference}}\",\n  \"external_reference\": \"INTRA-check\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers', () => pm.expect([200, 400, 404, 502, 503]).to.include(pm.response.code));"
                 ]
               }
             }

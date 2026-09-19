@@ -9,6 +9,13 @@
 .env.*
 !.env.example
 
+# A filled-in Postman environment holds a live API key and a platform key, both
+# of which move money or read every property's payment records. The template
+# beside it carries placeholders and is the one that gets committed.
+postman/*.postman_environment.json
+!postman/ptep_gateway_local.postman_environment.json
+!postman/ptep_gateway_production.template.postman_environment.json
+
 # Signing keys and certificates, however they are named.
 *.pem
 *.key
