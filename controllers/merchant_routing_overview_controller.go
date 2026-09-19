@@ -3,7 +3,9 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -66,6 +68,10 @@ type routingRow struct {
 	platformProperty
 	Configured bool   `json:"configured"`
 	Recipient  string `json:"recipient,omitempty"`
+	MappingID  string `json:"mappingId,omitempty"`
+	// Whether the booking platform has a property using this reference. False
+	// means money routed here would never be asked for — worth saying plainly.
+	KnownToPlatform bool `json:"knownToPlatform"`
 	// The destination, as far as it can be shown. The account is masked: this
 	// screen gets shared and projected, and the last four is enough to check a
 	// hotel against what it told the platform.
@@ -94,7 +100,18 @@ func (mc *MerchantRoutingOverviewController) properties(ctx context.Context) ([]
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, errPlatformRefused
+		// Say which. A 404 means the platform is reachable but has no such
+		// endpoint — an older build. A 401 means the shared key does not match.
+		// Both used to arrive here as "could not reach the booking platform",
+		// which sends somebody to check firewalls for an afternoon.
+		switch resp.StatusCode {
+		case http.StatusNotFound:
+			return nil, fmt.Errorf("the booking platform answered 404 — it is reachable, but has no /v1/internal/merchant-references. Deploy a build that has it, or check PLATFORM_BASE_URL points at the booking platform rather than something else")
+		case http.StatusUnauthorized:
+			return nil, fmt.Errorf("the booking platform rejected the key — PLATFORM_API_KEY here must equal INTERNAL_API_KEY there, and must be at least 32 characters")
+		default:
+			return nil, fmt.Errorf("the booking platform answered %d", resp.StatusCode)
+		}
 	}
 	var body struct {
 		Properties []platformProperty `json:"properties"`
@@ -105,18 +122,23 @@ func (mc *MerchantRoutingOverviewController) properties(ctx context.Context) ([]
 	return body.Properties, nil
 }
 
-var errPlatformRefused = fiber.NewError(http.StatusBadGateway, "the booking platform refused the request")
-
-// Overview lists every property and whether this gateway can pay it.
-// GET /api/admin/merchant-routing/overview?provider=dkpg&app_id=APP-xxxxxx
+// Overview lists who this gateway can pay.
+//
+// THE GATEWAY'S OWN ROUTING COMES FIRST, ALWAYS. An earlier version built this
+// list from the booking platform's properties and joined the local routing onto
+// it. That made the entire screen — including the means to add a payee —
+// disappear whenever the platform was unreachable, which is exactly when
+// somebody needs to look at it. It also implied the platform owns who gets
+// paid. It does not: this gateway does.
+//
+// So the rows are this gateway's recipients and mappings. The platform, when it
+// answers, adds two things and nothing else: the property name behind a
+// reference, and the properties it knows that are not mapped here yet. When it
+// does not answer, the list still works and says so.
 //
 // SCOPED TO ONE APP, ALWAYS. Routing is keyed on (app, merchant_reference): two
-// integrations may each pay the same property through a recipient of their own,
-// and that is deliberate. Answering without naming an app therefore has no
-// single answer — an earlier version of this collapsed them and showed whichever
-// mapping happened to come last, which meant a screen that could name the wrong
-// bank account with complete confidence. It now refuses instead, and hands back
-// the list of apps so the caller can pick.
+// integrations may each pay the same property through a recipient of their own.
+// Answering without naming an app has no single answer, so it refuses.
 func (mc *MerchantRoutingOverviewController) Overview(c *fiber.Ctx) error {
 	provider := strings.TrimSpace(c.Query("provider"))
 	if provider != "stripe" {
@@ -126,21 +148,6 @@ func (mc *MerchantRoutingOverviewController) Overview(c *fiber.Ctx) error {
 	if appID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": "app_id is required: routing is per app, so 'who gets paid' has no answer until one is named",
-		})
-	}
-
-	if !mc.platformConfigured() {
-		return c.JSON(fiber.Map{
-			"connected": false,
-			"rows":      []routingRow{},
-			"message":   "This gateway is not connected to the booking platform, so it cannot list properties. Set PLATFORM_BASE_URL and PLATFORM_API_KEY.",
-		})
-	}
-	properties, err := mc.properties(c.Context())
-	if err != nil {
-		return c.Status(http.StatusBadGateway).JSON(fiber.Map{
-			"connected": false,
-			"error":     "could not reach the booking platform",
 		})
 	}
 
@@ -157,56 +164,57 @@ func (mc *MerchantRoutingOverviewController) Overview(c *fiber.Ctx) error {
 		recipientName[r.ID] = r.Name
 	}
 
-	// merchant_reference → recipient, within this one app. ListMappings is
-	// already filtered by app, and the app is checked again here rather than
-	// trusted: a mapping from another integration in this map would attribute
-	// somebody else's bank account to this property.
-	byReference := map[string]storage.IntegrationRecipientMapping{}
-	for _, m := range mappings {
-		if m.IsActive && m.ExternalAppID == appID {
-			byReference[m.ExternalMerchantReference] = m
+	// The platform is an enrichment, not a dependency. Its absence is reported
+	// and the screen carries on.
+	platform := map[string]platformProperty{}
+	platformError := ""
+	if mc.platformConfigured() {
+		properties, err := mc.properties(c.Context())
+		if err != nil {
+			platformError = err.Error()
+			log.Printf("merchant routing overview: %v (PLATFORM_BASE_URL=%q)", err, mc.cfg.PlatformBaseURL)
 		}
+		for _, property := range properties {
+			if strings.TrimSpace(property.MerchantReference) != "" {
+				platform[property.MerchantReference] = property
+			}
+		}
+	} else {
+		platformError = "not connected to the booking platform (PLATFORM_BASE_URL and PLATFORM_API_KEY are unset)"
 	}
 
-	rows := make([]routingRow, 0, len(properties))
-	for _, property := range properties {
-		row := routingRow{platformProperty: property}
+	rows := []routingRow{}
+	mapped := map[string]bool{}
 
-		// A property that does not take money this way needs no routing, and
-		// reporting it as missing would bury the ones that do.
-		wants := property.AcceptsBank
-		if provider == "stripe" {
-			wants = property.AcceptsCard
-		}
-
-		if strings.TrimSpace(property.MerchantReference) == "" {
-			row.Missing = append(row.Missing, "merchant reference (set on the booking platform)")
-			rows = append(rows, row)
+	for _, mapping := range mappings {
+		if !mapping.IsActive || mapping.ExternalAppID != appID {
 			continue
 		}
-		mapping, mapped := byReference[property.MerchantReference]
-		if !mapped {
-			if wants {
-				row.Missing = append(row.Missing, "not mapped in this gateway")
-			}
-			rows = append(rows, row)
-			continue
+		mapped[mapping.ExternalMerchantReference] = true
+		row := routingRow{
+			MappingID: mapping.ID,
+			Recipient: recipientName[mapping.RecipientID],
 		}
-		row.Recipient = recipientName[mapping.RecipientID]
+		row.MerchantReference = mapping.ExternalMerchantReference
+		row.Property = row.Recipient
+		// If the platform knows this reference, its name for the property wins:
+		// that is the name a traveller booked, and the one a dispute will use.
+		if property, known := platform[mapping.ExternalMerchantReference]; known {
+			row.platformProperty = property
+			row.KnownToPlatform = true
+		} else if platformError == "" {
+			row.Missing = append(row.Missing, "no property on the booking platform uses this reference")
+		}
 
-		// Resolve exactly as a payment would, so this screen cannot claim a
-		// property is ready when a payment would be refused.
-		resolved, err := mc.Repo.ResolveActive(c.Context(), mapping.ExternalAppID, property.MerchantReference, provider)
+		resolved, err := mc.Repo.ResolveActive(c.Context(), appID, mapping.ExternalMerchantReference, provider)
 		if err != nil {
-			if wants {
-				row.Missing = append(row.Missing, "no active "+provider+" credential")
-			}
+			row.Missing = append(row.Missing, "no active "+provider+" destination")
 			rows = append(rows, row)
 			continue
 		}
 		values, err := mc.decrypt(resolved)
 		if err != nil {
-			row.Missing = append(row.Missing, "credential cannot be decrypted")
+			row.Missing = append(row.Missing, "destination cannot be decrypted")
 			rows = append(rows, row)
 			continue
 		}
@@ -222,6 +230,26 @@ func (mc *MerchantRoutingOverviewController) Overview(c *fiber.Ctx) error {
 		rows = append(rows, row)
 	}
 
+	// Properties the platform knows that nothing here pays yet. These are the
+	// ones worth acting on, so they sort to the top on the page.
+	for reference, property := range platform {
+		if mapped[reference] {
+			continue
+		}
+		wants := property.AcceptsBank
+		if provider == "stripe" {
+			wants = property.AcceptsCard
+		}
+		if !wants {
+			continue
+		}
+		rows = append(rows, routingRow{
+			platformProperty: property,
+			KnownToPlatform:  true,
+			Missing:          []string{"not set up in this gateway"},
+		})
+	}
+
 	ready := 0
 	for _, row := range rows {
 		if row.Configured {
@@ -229,7 +257,10 @@ func (mc *MerchantRoutingOverviewController) Overview(c *fiber.Ctx) error {
 		}
 	}
 	return c.JSON(fiber.Map{
-		"connected": true, "provider": provider, "appId": appID,
+		"connected":     platformError == "",
+		"platformError": platformError,
+		"platform":      mc.cfg.PlatformBaseURL,
+		"provider":      provider, "appId": appID,
 		"rows": rows, "ready": ready, "total": len(rows),
 	})
 }

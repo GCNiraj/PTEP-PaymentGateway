@@ -388,6 +388,9 @@
           <button id="refresh-routing-btn" class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-arrow-clockwise me-1"></i>Refresh
           </button>
+          <button id="routing-add-btn" class="btn btn-primary btn-sm">
+            <i class="bi bi-plus-lg me-1"></i>Add payee
+          </button>
         </div>
       </div>
 
@@ -426,8 +429,17 @@
           </p>
           <form id="routing-form" class="row g-3">
             <div class="col-md-6">
-              <label class="form-label small" for="routing-name">Recipient name</label>
+              <label class="form-label small" for="routing-name">Payee name</label>
               <input id="routing-name" class="form-control form-control-sm" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small" for="routing-reference">merchant_reference</label>
+              <input id="routing-reference" class="form-control form-control-sm" required
+                     placeholder="merchant-lhaki-hotels">
+              <div class="form-text small">
+                Must match <code>payment_merchant_reference</code> on the booking
+                platform exactly, or nothing will ever be paid through it.
+              </div>
             </div>
             <div class="col-md-6" data-provider="dkpg">
               <label class="form-label small" for="routing-account">beneficiary_account</label>
