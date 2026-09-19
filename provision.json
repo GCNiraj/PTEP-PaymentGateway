@@ -1,0 +1,31 @@
+{
+  "app_id": "APP-1komYw",
+  "payees": [
+    {
+      "name": "Lhaki Hotels",
+      "merchant_reference": "merchant-lhaki-hotels",
+      "dkpg": {
+        "beneficiary_account": "110158212197",
+        "beneficiary_name": "PG_AVS",
+        "beneficiary_bank": "1060"
+      },
+      "stripe": {
+        "submerchant_id": "2504188100000003",
+        "dk_account": "8288821831"
+      }
+    },
+    {
+      "name": "Dash Hotels",
+      "merchant_reference": "merchant-dash-hotels",
+      "dkpg": {
+        "beneficiary_account": "110102183048",
+        "beneficiary_name": "Niraj Bhattarai",
+        "beneficiary_bank": "1060"
+      },
+      "stripe": {
+        "submerchant_id": "MERCHANT_001",
+        "dk_account": "110102183048"
+      }
+    }
+  ]
+}

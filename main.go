@@ -130,6 +130,10 @@ func main() {
 
 	repo := storage.NewRepository(db)
 	routingRepo := storage.NewMerchantRoutingRepository(db)
+
+	// Who gets paid, from provision.json if there is one. Adds only, never
+	// overwrites, never fatal — see provision_boot.go.
+	provisionAtBoot(routingRepo, credentialCipher)
 	resolver := &controllers.GatewayResolver{Repo: routingRepo, Cipher: credentialCipher, Cfg: cfg, LogRepo: logRepo}
 	businessController := controllers.NewBusinessController(repo, cfg, resolver)
 
