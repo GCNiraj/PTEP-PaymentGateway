@@ -71,6 +71,22 @@ func provisionAtBoot(repo *storage.MerchantRoutingRepository, cipher *credential
 	}
 
 	ctx := context.Background()
+
+	// Checked before anything is written. A mapping points at an app, so on a
+	// gateway where that app has not been registered yet — a fresh deployment —
+	// every payee would be created and none of them could be paid, with the
+	// reason buried in a foreign-key error per payee.
+	switch exists, err := repo.AppExists(ctx, plan.AppID); {
+	case err != nil:
+		log.Printf("provision: could not check app %s: %v", plan.AppID, err)
+		return
+	case !exists:
+		log.Printf("provision: app %s is not registered in this gateway, so nothing was provisioned. "+
+			"Register the booking service in the dashboard (Apps), put its app id in %s, and restart.",
+			plan.AppID, path)
+		return
+	}
+
 	for _, payee := range plan.Payees {
 		if err := provisionOne(ctx, repo, cipher, plan.AppID, payee); err != nil {
 			log.Printf("provision: %s: %v", payee.Name, err)

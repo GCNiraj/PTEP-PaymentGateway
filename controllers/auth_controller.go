@@ -109,7 +109,16 @@ func isSecureRequest(c *fiber.Ctx) bool {
 	if strings.EqualFold(c.Protocol(), "https") {
 		return true
 	}
+	// Fiber's Hostname() is the Host header, port included ("localhost:5001").
+	// Compared with the port on, local development was never recognised, the
+	// cookies were marked Secure over plain http, and Safari — which, unlike
+	// Chrome, makes no exception for localhost — dropped them: sign-in
+	// succeeded and the next request was signed out.
 	hostname := strings.TrimSpace(c.Hostname())
+	if host, _, err := net.SplitHostPort(hostname); err == nil {
+		hostname = host
+	}
+	hostname = strings.Trim(hostname, "[]")
 	if hostname == "" {
 		return false
 	}

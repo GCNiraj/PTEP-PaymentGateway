@@ -123,6 +123,20 @@ func (r *MerchantRoutingRepository) SetRecipientActive(ctx context.Context, id s
 	return nil
 }
 
+// AppExists reports whether an app is registered here. Routing is per app, and
+// a mapping has a foreign key to one, so provisioning against an app id that
+// does not exist fails on every payee.
+func (r *MerchantRoutingRepository) AppExists(ctx context.Context, appID string) (bool, error) {
+	if !r.Enabled() {
+		return false, errors.New("merchant routing repository is not configured")
+	}
+	var exists bool
+	err := r.DB.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM external_apps WHERE id = $1)`,
+		strings.TrimSpace(appID)).Scan(&exists)
+	return exists, err
+}
+
 func (r *MerchantRoutingRepository) CreateMapping(ctx context.Context, mapping IntegrationRecipientMapping, actor string) error {
 	if !r.Enabled() {
 		return errors.New("merchant routing repository is not configured")
