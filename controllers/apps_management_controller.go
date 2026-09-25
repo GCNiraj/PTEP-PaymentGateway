@@ -9,6 +9,7 @@ import (
 
 	"example.com/fiber-mvc/internal/common"
 	"example.com/fiber-mvc/internal/storage"
+	"example.com/fiber-mvc/internal/validation"
 )
 
 // AppsManagementController handles CRUD operations for external applications.
@@ -32,11 +33,25 @@ func NewAppsManagementControllerWithOptions(repo *storage.AppsRepository, webhoo
 }
 
 // CreateAppRequest represents the request body for creating a new app.
+//
+// The tags are the whole of the server-side check. Before them this endpoint
+// stored "<h1>HTML Injection</h1>" as an app name and "986543210saasa" as a
+// phone number (ASD Cyber Security, 23 September 2026, finding V2).
 type CreateAppRequest struct {
-	Name         string `json:"name"`
-	ContactName  string `json:"contact_name"`
-	ContactEmail string `json:"contact_email"`
-	ContactPhone string `json:"contact_phone"`
+	Name         string `json:"name"          validate:"required,min=2,max=100,safetext"`
+	ContactName  string `json:"contact_name"  validate:"omitempty,min=2,max=100,safetext"`
+	ContactEmail string `json:"contact_email" validate:"omitempty,email,max=254"`
+	ContactPhone string `json:"contact_phone" validate:"omitempty,phonedigits"`
+}
+
+// trim removes surrounding whitespace before validation, so that " " fails
+// `required` rather than passing it, and a pasted value with a trailing newline
+// is accepted rather than rejected for a character nobody can see.
+func (r *CreateAppRequest) trim() {
+	r.Name = strings.TrimSpace(r.Name)
+	r.ContactName = strings.TrimSpace(r.ContactName)
+	r.ContactEmail = strings.TrimSpace(r.ContactEmail)
+	r.ContactPhone = strings.TrimSpace(r.ContactPhone)
 }
 
 // CreateAppResponse represents the response after creating an app.
@@ -58,11 +73,9 @@ func (c *AppsManagementController) Create(ctx *fiber.Ctx) error {
 		})
 	}
 
-	// Validate required fields
-	if strings.TrimSpace(req.Name) == "" {
-		return ctx.Status(400).JSON(fiber.Map{
-			"error": "app name is required",
-		})
+	req.trim()
+	if err := validation.Struct(&req); err != nil {
+		return ctx.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Generate app ID
@@ -129,12 +142,23 @@ func (c *AppsManagementController) Create(ctx *fiber.Ctx) error {
 }
 
 // UpdateAppRequest represents the request body for updating an app.
+//
+// The rules are identical to CreateAppRequest's on purpose: an edit endpoint
+// that accepts what its create endpoint refuses is the same hole with one extra
+// step.
 type UpdateAppRequest struct {
-	Name         string `json:"name"`
+	Name         string `json:"name"          validate:"required,min=2,max=100,safetext"`
 	IsActive     bool   `json:"is_active"`
-	ContactName  string `json:"contact_name"`
-	ContactEmail string `json:"contact_email"`
-	ContactPhone string `json:"contact_phone"`
+	ContactName  string `json:"contact_name"  validate:"omitempty,min=2,max=100,safetext"`
+	ContactEmail string `json:"contact_email" validate:"omitempty,email,max=254"`
+	ContactPhone string `json:"contact_phone" validate:"omitempty,phonedigits"`
+}
+
+func (r *UpdateAppRequest) trim() {
+	r.Name = strings.TrimSpace(r.Name)
+	r.ContactName = strings.TrimSpace(r.ContactName)
+	r.ContactEmail = strings.TrimSpace(r.ContactEmail)
+	r.ContactPhone = strings.TrimSpace(r.ContactPhone)
 }
 
 // Update modifies an existing external app.
@@ -152,6 +176,11 @@ func (c *AppsManagementController) Update(ctx *fiber.Ctx) error {
 		return ctx.Status(400).JSON(fiber.Map{
 			"error": "invalid request body",
 		})
+	}
+
+	req.trim()
+	if err := validation.Struct(&req); err != nil {
+		return ctx.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Check if app exists

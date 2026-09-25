@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 
 	"github.com/gofiber/fiber/v2"
@@ -31,9 +32,10 @@ func (ctl *DBDebugController) Status(c *fiber.Ctx) error {
 
 	var count int64
 	if err := ctl.DB.QueryRowContext(c.UserContext(), "select count(*) from payment_transactions").Scan(&count); err != nil {
+		log.Printf("db debug count failed: %v", err)
 		return c.Status(http.StatusOK).JSON(fiber.Map{
 			"db_connected": false,
-			"error":        err.Error(),
+			"error":        genericQueryError,
 		})
 	}
 

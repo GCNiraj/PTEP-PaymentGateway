@@ -91,6 +91,15 @@ func main() {
 		// and SecurityHeaders — correctly returns "https" when the app sits
 		// behind a TLS-terminating reverse proxy.
 		ProxyHeader: fiber.HeaderXForwardedProto,
+		// Every request body this service accepts is small JSON: an admin form,
+		// a log search, a payment instruction. There are no file uploads and no
+		// multipart handlers anywhere in the codebase, so 64 KB is far above
+		// anything legitimate and well below what is worth parsing from a
+		// stranger.
+		BodyLimit: 64 * 1024,
+		// Errors do not describe themselves to the caller. See
+		// middleware.ErrorHandler.
+		ErrorHandler: middleware.ErrorHandler,
 	})
 	// Slowloris/DoS hardening at the underlying server layer.
 	// MaxConnsPerIP is optional because a single reverse proxy IP can represent all clients.
@@ -239,6 +248,13 @@ func main() {
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.Redirect("/login", http.StatusFound)
 	})
+	// This is an administrative console for a payment gateway. Nothing on it is
+	// meant to be found in a search result, and a crawler that indexes /login
+	// is advertising the door.
+	app.Get("/robots.txt", func(c *fiber.Ctx) error {
+		c.Type("txt")
+		return c.SendString("User-agent: *\nDisallow: /\n")
+	})
 	app.Get(
 		"/dashboard",
 		middleware.AdminPageAuth(jwtMgr, sessionMgr, cfg.AuthCookieName, "/login"),
@@ -269,6 +285,21 @@ func main() {
 	app.Get("/charts.js", asset("./views/charts.js"))
 	app.Get("/modals.js", asset("./views/modals.js"))
 	app.Get("/login.js", asset("./views/login.js"))
+	// Bootstrap, Bootstrap Icons and Chart.js, served from this origin rather
+	// than cdn.jsdelivr.net. Serving them ourselves is what lets jsdelivr come
+	// out of script-src, style-src and font-src entirely (Burp informational,
+	// 23 September 2026): a console for a payment gateway should not depend on
+	// a third party being both available and uncompromised to render.
+	//
+	// Directory-wide serving is safe here in a way it is not for views/ — this
+	// folder holds nothing but these vendored files. They are version-pinned
+	// and never edited in place, so unlike the pages above they may be cached
+	// hard; a new version arrives under a new path.
+	app.Static("/vendor", "./views/vendor", fiber.Static{
+		Browse:        false,
+		CacheDuration: 24 * time.Hour,
+		MaxAge:        int((365 * 24 * time.Hour).Seconds()),
+	})
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)

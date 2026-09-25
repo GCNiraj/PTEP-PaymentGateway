@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"log"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -71,7 +72,8 @@ func (ctl *SeedController) SeedFakeTransactions(c *fiber.Ctx) error {
 	}
 
 	if err := ctl.DB.Create(&samples).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		log.Printf("seed sample transactions failed: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": genericQueryError})
 	}
 
 	return c.JSON(fiber.Map{"ok": true, "inserted": len(samples)})

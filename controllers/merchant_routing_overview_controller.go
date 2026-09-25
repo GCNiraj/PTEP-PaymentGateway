@@ -16,6 +16,7 @@ import (
 	"example.com/fiber-mvc/config"
 	"example.com/fiber-mvc/internal/credentials"
 	"example.com/fiber-mvc/internal/storage"
+	"example.com/fiber-mvc/internal/validation"
 )
 
 // Setting up who gets paid, from the dashboard.
@@ -280,10 +281,10 @@ func (mc *MerchantRoutingOverviewController) decrypt(routing *storage.ResolvedGa
 }
 
 type provisionRequest struct {
-	ExternalAppID     string            `json:"external_app_id"`
-	MerchantReference string            `json:"merchant_reference"`
-	Name              string            `json:"name"`
-	Provider          string            `json:"provider"`
+	ExternalAppID     string            `json:"external_app_id" validate:"required,max=100"`
+	MerchantReference string            `json:"merchant_reference" validate:"required,merchantref"`
+	Name              string            `json:"name" validate:"required,min=2,max=100,safetext"`
+	Provider          string            `json:"provider" validate:"required,oneof=dkpg stripe"`
 	Credentials       map[string]string `json:"credentials"`
 }
 
@@ -307,11 +308,19 @@ func (mc *MerchantRoutingOverviewController) Provision(c *fiber.Ctx) error {
 	if req.Provider == "" {
 		req.Provider = "dkpg"
 	}
-	if req.ExternalAppID == "" || req.MerchantReference == "" || req.Name == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "external_app_id, merchant_reference and name are required"})
+	if err := validation.Struct(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	// Trim inside the map too: the values are checked below and then encrypted,
+	// so a trailing space would be stored and sent to the bank verbatim.
+	for key, value := range req.Credentials {
+		req.Credentials[key] = strings.TrimSpace(value)
 	}
 	if !validCredentialPayload(req.Provider, req.Credentials) {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": credentialPayloadProblem(req.Provider, req.Credentials)})
+	}
+	if err := validateCredentialFormat(req.Provider, req.Credentials); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Refuse before creating anything if this reference is already mapped.

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -112,7 +113,8 @@ func (ctl *LogsController) listWithFilters(c *fiber.Ctx, req LogsListRequest) er
 
 	items, err := ctl.Repo.List(c.UserContext(), limit, offset, status, method, path, search)
 	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		log.Printf("list api logs failed: %v", err)
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": genericQueryError})
 	}
 
 	safe := make([]SafeLogEntry, 0, len(items))

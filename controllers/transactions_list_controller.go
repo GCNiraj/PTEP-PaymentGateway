@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -167,8 +168,10 @@ func (ctl *TransactionsListController) listWithFilters(c *fiber.Ctx, req Transac
 
 	appID := strings.TrimSpace(req.AppID)
 	status := strings.TrimSpace(req.Status)
-	from := strings.TrimSpace(req.From)
-	to := strings.TrimSpace(req.To)
+	from, to, err := parseDateRange(req.From, req.To)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
 	search := strings.TrimSpace(req.Search)
 	limit := req.Limit
 	if limit == 0 {
@@ -180,8 +183,9 @@ func (ctl *TransactionsListController) listWithFilters(c *fiber.Ctx, req Transac
 
 	rows, err := ctl.Repo.ListRecent(c.UserContext(), limit, appID, status, from, to, search)
 	if err != nil {
+		log.Printf("list transactions failed: %v", err)
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-			"error": err.Error(),
+			"error": genericQueryError,
 		})
 	}
 
@@ -206,13 +210,16 @@ func (ctl *TransactionsListController) Stats(c *fiber.Ctx) error {
 		})
 	}
 
-	from := c.Query("from")
-	to := c.Query("to")
+	from, to, err := parseDateRange(c.Query("from"), c.Query("to"))
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
 
 	stats, err := ctl.Repo.GetTransactionStats(c.UserContext(), from, to)
 	if err != nil {
+		log.Printf("transaction stats failed: %v", err)
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-			"error": err.Error(),
+			"error": genericQueryError,
 		})
 	}
 
@@ -228,13 +235,16 @@ func (ctl *TransactionsListController) DailyStats(c *fiber.Ctx) error {
 		})
 	}
 
-	from := c.Query("from")
-	to := c.Query("to")
+	from, to, err := parseDateRange(c.Query("from"), c.Query("to"))
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
 
 	volumes, err := ctl.Repo.GetDailyVolumes(c.UserContext(), from, to)
 	if err != nil {
+		log.Printf("daily transaction volumes failed: %v", err)
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-			"error": err.Error(),
+			"error": genericQueryError,
 		})
 	}
 
@@ -259,7 +269,8 @@ func (ctl *TransactionsListController) Get(c *fiber.Ctx) error {
 
 	row, err := ctl.Repo.GetTransactionFull(c.UserContext(), id)
 	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		log.Printf("get transaction %d failed: %v", id, err)
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": genericQueryError})
 	}
 
 	c.Set("Cache-Control", "no-store")
@@ -288,7 +299,8 @@ func (ctl *TransactionsListController) GetDetailByBody(c *fiber.Ctx) error {
 
 	row, err := ctl.Repo.GetTransactionFull(c.UserContext(), req.ID)
 	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		log.Printf("get transaction %d failed: %v", req.ID, err)
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": genericQueryError})
 	}
 
 	c.Set("Cache-Control", "no-store")

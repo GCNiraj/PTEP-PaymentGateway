@@ -704,14 +704,16 @@ func (ctrl *InternationalController) listWithFilters(c *fiber.Ctx, req Internati
 		limit = 50
 	}
 	status := strings.TrimSpace(req.Status)
-	from := strings.TrimSpace(req.From)
-	to := strings.TrimSpace(req.To)
+	from, to, err := parseDateRange(req.From, req.To)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
 	search := strings.TrimSpace(req.Search)
 
 	payments, err := ctrl.IntlRepo.List(c.Context(), limit, status, from, to, search)
 	if err != nil {
 		log.Printf("Error listing international payments: %v", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": genericQueryError})
 	}
 
 	safe := make([]SafeInternationalPayment, 0, len(payments))

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gofiber/fiber/v2"
@@ -63,7 +64,8 @@ func (ctl *AppsController) List(c *fiber.Ctx) error {
 
 	apps, err := ctl.Repo.List(c.UserContext(), 50)
 	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		log.Printf("list apps failed: %v", err)
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": genericQueryError})
 	}
 
 	safe := make([]AppListItem, 0, len(apps))

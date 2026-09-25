@@ -6,7 +6,17 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-const defaultCSPPolicy = "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'; script-src 'self' https://cdn.jsdelivr.net https://challenges.cloudflare.com; style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com"
+// defaultCSPPolicy is the policy for the bundled login and dashboard pages.
+//
+// cdn.jsdelivr.net was removed from script-src, style-src and font-src once
+// Bootstrap, Bootstrap Icons and Chart.js were vendored under /vendor and
+// served from this origin (Burp informational, 23 September 2026). Nothing on
+// these pages loads from jsdelivr any more, and naming a CDN here would let a
+// compromise of it run script inside a payment gateway's console.
+//
+// challenges.cloudflare.com stays: Turnstile on the login page is loaded,
+// connected to and framed from there. The Google Fonts entries stay too.
+const defaultCSPPolicy = "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com"
 const defaultHSTSValue = "max-age=31536000; includeSubDomains; preload"
 
 var techDisclosureHeaders = []string{

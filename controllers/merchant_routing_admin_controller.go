@@ -12,6 +12,7 @@ import (
 
 	"example.com/fiber-mvc/internal/credentials"
 	"example.com/fiber-mvc/internal/storage"
+	"example.com/fiber-mvc/internal/validation"
 )
 
 // MerchantRoutingAdminController owns all recipient mappings and credential
@@ -22,13 +23,13 @@ type MerchantRoutingAdminController struct {
 }
 
 type createRecipientRequest struct {
-	Name string `json:"name"`
+	Name string `json:"name" validate:"required,min=2,max=100,safetext"`
 }
 
 type createMappingRequest struct {
-	ExternalAppID             string `json:"external_app_id"`
-	ExternalMerchantReference string `json:"merchant_reference"`
-	RecipientID               string `json:"recipient_id"`
+	ExternalAppID             string `json:"external_app_id" validate:"required,max=100"`
+	ExternalMerchantReference string `json:"merchant_reference" validate:"required,merchantref"`
+	RecipientID               string `json:"recipient_id" validate:"required,max=100"`
 }
 
 type createCredentialRequest struct {
@@ -44,10 +45,14 @@ func NewMerchantRoutingAdminController(repo *storage.MerchantRoutingRepository, 
 
 func (ctl *MerchantRoutingAdminController) CreateRecipient(c *fiber.Ctx) error {
 	var req createRecipientRequest
-	if err := c.BodyParser(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "recipient name is required"})
 	}
-	recipient := storage.PaymentRecipient{ID: uuid.NewString(), Name: strings.TrimSpace(req.Name), IsActive: true}
+	req.Name = strings.TrimSpace(req.Name)
+	if err := validation.Struct(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	recipient := storage.PaymentRecipient{ID: uuid.NewString(), Name: req.Name, IsActive: true}
 	if err := ctl.Repo.CreateRecipient(c.Context(), recipient, adminActor(c)); err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create recipient"})
 	}
@@ -75,8 +80,14 @@ func (ctl *MerchantRoutingAdminController) SetRecipientActive(c *fiber.Ctx) erro
 
 func (ctl *MerchantRoutingAdminController) CreateMapping(c *fiber.Ctx) error {
 	var req createMappingRequest
-	if err := c.BodyParser(&req); err != nil || strings.TrimSpace(req.ExternalAppID) == "" || strings.TrimSpace(req.ExternalMerchantReference) == "" || strings.TrimSpace(req.RecipientID) == "" {
+	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "external_app_id, merchant_reference, and recipient_id are required"})
+	}
+	req.ExternalAppID = strings.TrimSpace(req.ExternalAppID)
+	req.ExternalMerchantReference = strings.TrimSpace(req.ExternalMerchantReference)
+	req.RecipientID = strings.TrimSpace(req.RecipientID)
+	if err := validation.Struct(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	if err := ctl.Repo.CreateMapping(c.Context(), storage.IntegrationRecipientMapping{ExternalAppID: req.ExternalAppID, ExternalMerchantReference: req.ExternalMerchantReference, RecipientID: req.RecipientID, IsActive: true}, adminActor(c)); err != nil {
 		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "failed to create merchant mapping"})
@@ -111,8 +122,14 @@ func (ctl *MerchantRoutingAdminController) CreateCredential(c *fiber.Ctx) error 
 	if ctl == nil || ctl.Repo == nil || ctl.Cipher == nil || strings.TrimSpace(req.RecipientID) == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway credential configuration"})
 	}
+	for key, value := range req.Credentials {
+		req.Credentials[key] = strings.TrimSpace(value)
+	}
 	if !validCredentialPayload(req.Provider, req.Credentials) {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": credentialPayloadProblem(req.Provider, req.Credentials)})
+	}
+	if err := validateCredentialFormat(req.Provider, req.Credentials); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	credential, err := ctl.Repo.CreateDraftCredential(c.Context(), strings.TrimSpace(req.RecipientID), strings.TrimSpace(req.Provider), "env:PAYMENT_CREDENTIALS_MASTER_KEY_B64", adminActor(c), ctl.credentialEncryptor(req.Credentials))
 	if err != nil {
@@ -132,8 +149,14 @@ func (ctl *MerchantRoutingAdminController) RotateCredential(c *fiber.Ctx) error 
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
+	for key, value := range req.Credentials {
+		req.Credentials[key] = strings.TrimSpace(value)
+	}
 	if !validCredentialPayload(old.Provider, req.Credentials) {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway credential configuration"})
+	}
+	if err := validateCredentialFormat(old.Provider, req.Credentials); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	credential, err := ctl.Repo.RotateCredential(c.Context(), old.ID, "env:PAYMENT_CREDENTIALS_MASTER_KEY_B64", adminActor(c), ctl.credentialEncryptor(req.Credentials))
 	if err != nil {
@@ -253,6 +276,62 @@ func validCredentialPayload(provider string, values map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// supportedBeneficiaryBanks is the set of bank codes this gateway will book a
+// beneficiary against. It is deliberately a list rather than a single constant
+// so that adding a bank is one entry here, not a change of shape.
+//
+// It is 1060 and only 1060: every beneficiary on this deployment is at that
+// bank. The value is passed straight through to DKPG as bene_bank_code on
+// intra/inquiry with nothing behind it, so a typo here is a payment sent to a
+// bank that was never meant to receive it — which is why this is checked rather
+// than trusted.
+var supportedBeneficiaryBanks = []string{"1060"}
+
+func supportedBank(code string) bool {
+	for _, supported := range supportedBeneficiaryBanks {
+		if code == supported {
+			return true
+		}
+	}
+	return false
+}
+
+// validateCredentialFormat checks the shape of the values that describe where a
+// recipient's money goes.
+//
+// validCredentialPayload above answers a different question — whether the right
+// keys are present and no shared authentication has been smuggled in. It says
+// nothing about what is *in* them, so "986543210saasa" was a valid account
+// number and "<h1>x</h1>" a valid beneficiary name (ASD Cyber Security, 23
+// September 2026, finding V2). These values are encrypted and then sent to a
+// bank; a malformed one is discovered at settlement, by which time money has
+// moved.
+func validateCredentialFormat(provider string, values map[string]string) error {
+	if provider == "dkpg" {
+		if !validation.AccountNumber(values["beneficiary_account"]) {
+			return errors.New("beneficiary_account must be 6 to 20 digits")
+		}
+		if !supportedBank(values["beneficiary_bank"]) {
+			return errors.New("beneficiary_bank must be one of: " + strings.Join(supportedBeneficiaryBanks, ", "))
+		}
+		if name := values["beneficiary_name"]; len(name) < 2 || len(name) > 100 || !validation.SafeText(name) {
+			return errors.New("beneficiary_name must be 2 to 100 characters and may contain only letters, digits, spaces and . , & ' ( ) - _ /")
+		}
+		return nil
+	}
+
+	// Stripe. These are identifiers the card processor issued, not free text.
+	for _, key := range []string{"submerchant_id", "dk_account"} {
+		value := values[key]
+		// MerchantReference caps at 64, so the message must say 64 and not a
+		// larger number it would then refuse.
+		if len(value) < 2 || !validation.MerchantReference(value) {
+			return errors.New(key + " must be 2 to 64 characters of letters, digits, hyphen or underscore")
+		}
+	}
+	return nil
 }
 
 // credentialPayloadProblem says what is wrong, because "invalid gateway
